@@ -49,6 +49,8 @@ Recently, 3D Gaussian splatting-based RGB-D SLAM has demonstrated remarkable per
 
 </details>
 
+## 🚧 **under construction** 🚧
+
 ## Contact
 If you have any questions, Feel free to contact:
 - Xingguang Zhong {[zhong@igg.uni-bonn.de]()}
