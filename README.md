@@ -42,11 +42,8 @@ Tracking & Mapping | Map State Update |
 
 ## Abstract
 <details>
-  
-  <summary><strong>[Click to expand]</strong></summary>
-
-Recently, 3D Gaussian splatting-based RGB-D SLAM has demonstrated remarkable performance in high-fidelity 3D reconstruction. However, the lack of depth rendering consistency and efficient loop closure hinders the geometric quality and global consistency of the reconstructed maps in online settings. In this paper, we present **2DGS-SLAM**, an RGB-D SLAM system that leverages 2D Gaussian splatting as the map representation. By exploiting the depth-consistent rendering property of the 2D variant, we propose an accurate and robust camera pose optimization method, achieving geometrically faithful 3D reconstruction. Furthermore, we integrate efficient loop detection and camera relocalization by leveraging MASt3R, a 3D foundation model, and enable real-time map updates through a locally maintained active map. Experimental results show that our 2DGS-SLAM achieves superior tracking accuracy, higher surface reconstruction quality, and improved global consistency compared to existing rendering-based SLAM methods, while also maintaining high-fidelity image rendering and enhanced computational efficiency.
-
+<summary><strong>[Click to expand]</strong></summary>
+Recently, 3D Gaussian splatting-based RGB-D SLAM displays remarkable performance of high-fidelity 3D reconstruction. However, the lack of depth rendering consistency and efficient loop closure limits the quality of its geometric reconstructions and its ability to perform globally consistent mapping online. In this paper, we present 2DGS-SLAM, an RGB-D SLAM system using 2D Gaussian splatting as the map representation. By leveraging the depth-consistent rendering property of the 2D variant, we propose an accurate camera pose optimization method and achieve geometrically accurate 3D reconstruction. In addition, we implement efficient loop detection and camera relocalization by leveraging MASt3R, a 3D foundation model, and achieve efficient map updates by maintaining a local active map. Experiments show that our 2DGS-SLAM approach achieves superior tracking accuracy, higher surface reconstruction quality, and more consistent global map reconstruction compared to existing rendering-based SLAM methods, while maintaining high-fidelity image rendering and improved computational efficiency.
 </details>
 
 ## 🚧 **under construction** 🚧
