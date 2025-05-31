@@ -51,5 +51,3 @@ Recently, 3D Gaussian splatting-based RGB-D SLAM displays remarkable performance
 ## Contact
 If you have any questions, Feel free to contact:
 - Xingguang Zhong {[zhong@igg.uni-bonn.de]()}
-- Yue Pan {[yue.pan@igg.uni-bonn.de]()}
-- Liren Jin {[ljin@uni-bonn.de]()}
