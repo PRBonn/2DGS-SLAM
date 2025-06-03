@@ -49,7 +49,7 @@ Recently, 3D Gaussian splatting-based RGB-D SLAM displays remarkable performance
 ## 🚧 **under construction** 🚧
 
 ## Citation
-If you use 2DGS for your academic work, please cite:
+If you use 2DGS-SLAM for your academic work, please cite:
 ```
 @article{zhong2025arxiv,
   title   = {{Globally Consistent RGB-D SLAM with 2D Gaussian Splatting}},
