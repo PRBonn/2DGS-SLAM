@@ -48,6 +48,19 @@ Recently, 3D Gaussian splatting-based RGB-D SLAM displays remarkable performance
 
 ## 🚧 **under construction** 🚧
 
+## Citation
+If you use 2DGS for your academic work, please cite:
+```
+@article{zhong2025arxiv,
+  title   = {{Globally Consistent RGB-D SLAM with 2D Gaussian Splatting}},
+  author  = {Zhong, Xingguang and Pan, Yue and Jin, Liren and Popović, Marija and Behley, Jens and Stachniss, Jens},
+  journal = arxiv,
+  volume  = {arXiv:2506.00970},
+  year    = {2025},
+  url     = {https://arxiv.org/pdf/2506.00970.pdf}
+}
+```
+
 ## Contact
 If you have any questions, Feel free to contact:
 - Xingguang Zhong {[zhong@igg.uni-bonn.de]()}
