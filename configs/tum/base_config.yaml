@@ -1,0 +1,85 @@
+## SLAM parameters
+Results:
+  save_results: True
+  save_dir: "results"
+  name_tag: "test"
+  save_trj: True
+  save_trj_kf_intv: 50
+  use_gui: False
+  eval_rendering: False
+  map_refine: False
+  map_refine_iterations: 26000
+  spark_live_enable: False
+  spark_live_interval_sec: 10.0
+  spark_live_port: 8765
+
+Dataset:
+  type: 'tum'
+  sensor_type: 'depth'
+  pcd_downsample: 0.15
+  frame_begin: 0
+  frame_end: null
+  frame_step: 2
+
+Training:
+  #Common
+  depth_type: 'expected' # 'median' or 'expected'
+  background_color: 'black' # 'black' or 'white'
+  #Initialization
+  init_itr_num: 300
+  # Tracking
+  tracking_itr_num: 120
+  edge_threshold: 1.1
+  rgb_boundary_threshold: 0.01
+  depth_min_threshold: 0.1
+  depth_max_threshold: 5.0
+  kf_max_translation: 0.35
+  kf_overlap: 0.9
+  kf_min_overlap: 0.8
+  traking_lambda_depth: 1.0
+  traking_lambad_grad: 5.0
+  depth_error_threshold: 0.045
+  lr:
+    cam_rot_delta: 0.003
+    cam_trans_delta: 0.0015
+  # Mapping
+  voxel_size: 0.05
+  key_frame_iter_num: 15
+  active_train_num: 5
+  inactive_train_num: 3
+  lambda_ssim: 0.125
+  lambda_normal: 0.02
+  lambda_depth: 5.0
+  lambda_dist: 1.0
+  prune_threshold: 0.5
+  prune_size_threshold: 0.25
+  # loop detection
+  # relocation method: one of ['mast3r', 'icp', 'robust_icp']
+  reloc_method: 'mast3r'
+  enable_revisit_loop: True  # enable/disable revisit-based loop closure
+  enable_scale_optimization: True  # enable/disable scale optimization in loop closure
+  enable_mast3r_reloc: True  # enable/disable mast3r-based relocalization
+  loop_candidate_score: 0.025
+  old_than_N_keyframe: 12
+  loop_overlap_ratio: 0.5
+  # PGO
+  pgo_max_iter: 50
+  pgo_tran_std: 0.01 # m 
+  pgo_rot_std: 0.03 # deg
+  pgo_error_thre_frame: 200.0
+
+## 3DGS default parameters
+opt_params:
+  position_lr: 0.000032
+  feature_lr: 0.0025
+  opacity_lr: 0.05
+  scaling_lr: 0.0005
+  rotation_lr: 0.001
+  percent_dense: 0.01
+
+model_params:
+  sh_degree: 0
+  initial_opacity: 0.999
+  source_path: ""
+  model_path: ""
+  data_device: "cuda"

@@ -1,0 +1,46 @@
+[project]
+name = "2dgs-slam"
+version = "0.1.0"
+description = "Globally Consistent RGB-D SLAM with 2D Gaussian Splatting"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "numpy<2",
+    "opencv-python<4.11",
+    "open3d",
+    "trimesh",
+    "plyfile",
+    "pyyaml",
+    "munch",
+    "rich",
+    "tqdm",
+    "typer>=0.12",
+    "dtyper>=2.0",
+    "einops",
+    "pillow",
+    "matplotlib",
+    "scipy",
+    "evo==1.11.0",
+    "torchmetrics",
+    "lpips",
+    "lietorch",
+    "gtsam",
+    "huggingface_hub",
+    "roma",
+    "faiss-cpu",
+    "glfw",
+    "PyOpenGL",
+    "PyGLM",
+    "imgviz",
+]
+
+[tool.uv]
+find-links = [
+    "https://download.pytorch.org/whl/cu118",
+]
+
+[tool.uv.sources]
+diff-surfel-rasterization = { path = "submodules/diff-surfel-rasterization" }
+simple-knn = { path = "submodules/simple-knn" }
+fused-ssim = { path = "submodules/fused-ssim" }

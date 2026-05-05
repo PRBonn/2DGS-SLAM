@@ -1,0 +1,38 @@
+# Install PyTorch with CUDA before this file — see README. Then install with:
+#   pip install --no-build-isolation -r requirements.txt
+# (--no-build-isolation is needed so CUDA extensions compile against your env’s torch.)
+
+numpy<2
+opencv-python<4.11
+open3d
+trimesh
+plyfile
+PyYAML
+munch
+rich
+tqdm
+typer>=0.12
+dtyper>=2.0
+einops
+Pillow
+matplotlib
+scipy
+evo==1.11.0
+torchmetrics
+lpips
+lietorch
+gtsam
+huggingface_hub
+roma
+faiss-cpu
+glfw
+PyOpenGL
+PyGLM
+imgviz
+
+# Local CUDA / C extensions (paths relative to repo root)
+./submodules/diff-surfel-rasterization
+./submodules/simple-knn
+./submodules/fused-ssim
+./submodules/dust3r/croco/models/curope
+./submodules/dust3r/asmk

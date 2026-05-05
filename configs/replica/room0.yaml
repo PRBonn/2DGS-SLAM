@@ -1,0 +1,5 @@
+inherit_from: "configs/replica/base_config.yaml"
+Dataset:
+  sequence_name: "room0"
+  dataset_path: "datasets/replica/room0/"
+  single_thread: False

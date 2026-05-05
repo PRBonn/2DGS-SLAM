@@ -1,0 +1,5 @@
+inherit_from: "configs/replica/base_config.yaml"
+Dataset:
+  sequence_name: "office2"
+  dataset_path: "datasets/replica/office2/"
+  single_thread: False

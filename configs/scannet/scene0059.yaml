@@ -1,0 +1,21 @@
+inherit_from: "configs/scannet/base_config.yaml"
+
+Dataset:
+  sequence_name: "scene0059_00"
+  dataset_path: "datasets/scannet/scene0059_00"
+  Calibration:
+    fx: 577.590698
+    fy: 578.729797
+    cx: 318.905426
+    cy: 242.683609
+    k1: 0
+    k2: 0
+    p1: 0
+    p2: 0
+    k3: 0
+    distorted: False
+    width: 640
+    height: 480
+    crop_edge: 12
+    depth_scale: 1.0
+    depth_noise_scale: 0.005

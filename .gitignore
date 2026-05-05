@@ -1,0 +1,37 @@
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.egg-info/
+
+# Build artifacts
+**/build/
+**/dist/
+**/*.so
+**/*.o
+
+# Model weights & checkpoints
+**/*.pth
+**/*.pkl
+**/*.ckpt
+**/*.pt
+
+# Data
+datasets/
+results/
+screenshots/
+wandb/
+
+# IDE & OS
+.idea/
+.vscode/
+**/.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Misc
+.claude/
+.cursor/
+.cursorrules
+bak/
