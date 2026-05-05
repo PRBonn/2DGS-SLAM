@@ -49,7 +49,7 @@ Recently, 3D Gaussian splatting-based RGB-D SLAM displays remarkable performance
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/PRBonn/2DGS-SLAM.git --recursive
+git clone git@github.com:PRBonn/2DGS-SLAM.git
 cd 2DGS-SLAM
 ```
 
@@ -134,7 +134,7 @@ python slam.py --config configs/tum/fr3_office.yaml -w
 python slam.py --config configs/scannet/scene0000.yaml -w
 
 # Replica, but only processing the first 200 frames
-python slam.py --config configs/scannet/scene0000.yaml -w --range 0 200 1
+python slam.py --config configs/replica/office0.yaml -w --range 0 200 1
 ```
 
 ### Running on all scenes without GUI
