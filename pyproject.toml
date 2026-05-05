@@ -24,7 +24,6 @@ dependencies = [
     "evo==1.11.0",
     "torchmetrics",
     "lpips",
-    "lietorch",
     "gtsam",
     "huggingface_hub",
     "roma",

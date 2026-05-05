@@ -1,9 +1,58 @@
 import torch
 from torch import nn
 import math
-import lietorch
 
 from gaussian_splatting.utils.graphics_utils import getProjectionMatrix2
+
+
+def _skew_sym_mat(x):
+    device = x.device
+    dtype = x.dtype
+    ssm = torch.zeros(3, 3, device=device, dtype=dtype)
+    ssm[0, 1] = -x[2]
+    ssm[0, 2] = x[1]
+    ssm[1, 0] = x[2]
+    ssm[1, 2] = -x[0]
+    ssm[2, 0] = -x[1]
+    ssm[2, 1] = x[0]
+    return ssm
+
+
+def _SO3_exp(theta):
+    device = theta.device
+    dtype = theta.dtype
+    W = _skew_sym_mat(theta)
+    W2 = W @ W
+    angle = torch.norm(theta)
+    I = torch.eye(3, device=device, dtype=dtype)
+    if angle < 1e-5:
+        return I + W + 0.5 * W2
+    return I + (torch.sin(angle) / angle) * W + ((1 - torch.cos(angle)) / (angle**2)) * W2
+
+
+def _V(theta):
+    device = theta.device
+    dtype = theta.dtype
+    I = torch.eye(3, device=device, dtype=dtype)
+    W = _skew_sym_mat(theta)
+    W2 = W @ W
+    angle = torch.norm(theta)
+    if angle < 1e-5:
+        return I + 0.5 * W + (1.0 / 6.0) * W2
+    return I + W * ((1.0 - torch.cos(angle)) / (angle**2)) + W2 * ((angle - torch.sin(angle)) / (angle**3))
+
+
+def SE3_exp(tau):
+    device = tau.device
+    dtype = tau.dtype
+    rho = tau[:3]
+    theta = tau[3:]
+    R = _SO3_exp(theta)
+    t = _V(theta) @ rho
+    T = torch.eye(4, device=device, dtype=dtype)
+    T[:3, :3] = R
+    T[:3, 3] = t
+    return T
 
 
 class Camera(nn.Module):
@@ -132,7 +181,7 @@ class Camera(nn.Module):
     def update_pose(self, converged_threshold=1e-4):
         tau = torch.cat([self.cam_trans_delta,
                         self.cam_rot_delta], axis=0)
-        new_w2c = lietorch.SE3.exp(tau).matrix() @ self.T
+        new_w2c = SE3_exp(tau) @ self.T
         converged = (tau**2).sum() < (converged_threshold**2)
         self.T = new_w2c
         self.cam_rot_delta.data.fill_(0)

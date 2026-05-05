@@ -62,18 +62,22 @@ conda activate 2dgs-slam
 
 ### 3. Install PyTorch
 
-Install PyTorch with CUDA support. We tested with PyTorch 2.0+ and CUDA 11.8/12.1.
+Install PyTorch with CUDA support matching your system's CUDA version. We tested with PyTorch 2.0+ and CUDA 11.8/12.1. Check your CUDA version with `nvcc --version` or `nvidia-smi`.
 
 ```bash
+# Example for CUDA 11.8
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+# Example for CUDA 12.1
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ### 4. Install dependencies
 
-PyTorch must already be installed (step 3). The Gaussian rasterizer and related packages compile against your environment's Torch, so use `--no-build-isolation` once for the whole file:
+PyTorch must already be installed (step 3). The CUDA extensions compile against your environment's Torch, so `--no-build-isolation` is required:
 
 ```bash
 pip install --no-build-isolation -r requirements.txt
+pip install --no-build-isolation ./submodules/dust3r/asmk
 ```
 
 

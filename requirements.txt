@@ -20,7 +20,6 @@ scipy
 evo==1.11.0
 torchmetrics
 lpips
-lietorch
 gtsam
 huggingface_hub
 roma
@@ -35,4 +34,5 @@ imgviz
 ./submodules/simple-knn
 ./submodules/fused-ssim
 ./submodules/dust3r/croco/models/curope
-./submodules/dust3r/asmk
+# asmk requires faiss to be installed first, install separately:
+# pip install --no-build-isolation ./submodules/dust3r/asmk
