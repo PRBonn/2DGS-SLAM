@@ -25,11 +25,20 @@ from gui import gui_utils, slam_gui
 import signal
 
 
+def _quat_to_rotation_matrix(qx, qy, qz, qw):
+    R = np.array([
+        [1 - 2*(qy*qy + qz*qz), 2*(qx*qy - qz*qw),     2*(qx*qz + qy*qw)],
+        [2*(qx*qy + qz*qw),     1 - 2*(qx*qx + qz*qz), 2*(qy*qz - qx*qw)],
+        [2*(qx*qz - qy*qw),     2*(qy*qz + qx*qw),     1 - 2*(qx*qx + qy*qy)],
+    ])
+    return R
+
+
 def load_pose_from_file(file):
     if not os.path.exists(file):
         Log(f"Pose file does not exist: {file}", tag="Viser")
         return None
-    
+
     cameras = []
 
     K = torch.eye(3)
@@ -39,20 +48,48 @@ def load_pose_from_file(file):
     K[1, 2] = 240
 
     with open(file, 'r') as f:
-        for line in f:
-            parts = line.strip().split()
-            frame_id = int(parts[0])
-            pose_flat = list(map(float, parts[1:]))
-            pose = np.array(pose_flat).reshape(4, 4)
+        for idx, line in enumerate(f):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            parts = line.split()
+            n = len(parts)
+
+            if n == 8:
+                # TUM format: timestamp tx ty tz qx qy qz qw (C2W)
+                frame_id = idx
+                tx, ty, tz = float(parts[1]), float(parts[2]), float(parts[3])
+                qx, qy, qz, qw = float(parts[4]), float(parts[5]), float(parts[6]), float(parts[7])
+                R = _quat_to_rotation_matrix(qx, qy, qz, qw)
+                c2w = np.eye(4)
+                c2w[:3, :3] = R
+                c2w[:3, 3] = [tx, ty, tz]
+                pose = np.linalg.inv(c2w)  # Camera.T expects W2C
+            elif n == 17:
+                # key_pose format: frame_id + flattened W2C 4x4 matrix
+                frame_id = int(parts[0])
+                pose = np.array(list(map(float, parts[1:]))).reshape(4, 4)
+            elif n == 16:
+                # Flattened C2W 4x4 matrix without frame_id (e.g. Replica traj.txt)
+                frame_id = idx
+                c2w = np.array(list(map(float, parts))).reshape(4, 4)
+                pose = np.linalg.inv(c2w)  # Camera.T expects W2C
+            else:
+                Log(f"Skipping line with {n} values (expected 8, 16, or 17)", tag="Viser")
+                continue
+
             pose_torch = torch.from_numpy(pose)
             cam = Camera(frame_id, pose_torch, None, K, 480, 640)
-
             cameras.append(cam)
+
+    if not cameras:
+        Log(f"No valid poses found in: {file}", tag="Viser")
+        return None
 
     return cameras
 
 class Viser:
-    def __init__(self, ply_path, pose_path, mesh_path=None):
+    def __init__(self, ply_path, pose_path=None, mesh_path=None):
         self.device = 'cuda'
         self.dtype = torch.float32
 
@@ -63,7 +100,10 @@ class Viser:
         self.gaussians = GaussianModel()
         self.gaussians.load_ply(ply_path)
 
-        self.cameras = load_pose_from_file(pose_path)
+        if pose_path:
+            self.cameras = load_pose_from_file(pose_path)
+        else:
+            self.cameras = None
 
         # init gui
         mp.set_start_method("spawn")
@@ -99,22 +139,27 @@ class Viser:
     def run(self):
 
         vis_cameras = []
-        for i in range(len(self.cameras)):
-            if i % 25 == 0:
-                vis_cameras.append(self.cameras[i])
-
+        current_frame = None
         est_traj, traj_ids = None, None
-        if len(self.cameras) >= 2:
-            poses = []
-            ids = []
-            for cam in self.cameras:
-                cR, ct = cam.get_RT
-                W2C = getWorld2View2(cR, ct).detach().cpu().numpy()
-                poses.append(np.linalg.inv(W2C))
-                ids.append(cam.uid)
-            est_traj = np.stack(poses, axis=0)
-            traj_ids = np.asarray(ids, dtype=np.int64)
 
+        if self.cameras:
+            for i in range(len(self.cameras)):
+                if i % 25 == 0:
+                    vis_cameras.append(self.cameras[i])
+            current_frame = self.cameras[-1]
+
+            if len(self.cameras) >= 2:
+                poses = []
+                ids = []
+                for cam in self.cameras:
+                    cR, ct = cam.get_RT
+                    W2C = getWorld2View2(cR, ct).detach().cpu().numpy()
+                    poses.append(np.linalg.inv(W2C))
+                    ids.append(cam.uid)
+                est_traj = np.stack(poses, axis=0)
+                traj_ids = np.asarray(ids, dtype=np.int64)
+
+        first_packet = True
         while True:
             gpu_gb = (
                 torch.cuda.memory_allocated(0) / (1024**3)
@@ -126,8 +171,8 @@ class Viser:
             self.q_main2vis.put(
                 gui_utils.GaussianPacket(
                     gaussians=self.gaussians,
-                    current_frame=self.cameras[-1],
-                    keyframes=vis_cameras,
+                    current_frame=current_frame if first_packet else None,
+                    keyframes=vis_cameras if vis_cameras else None,
                     gtframes=None,
                     gtcolor=None,
                     gtdepth=None,
@@ -139,6 +184,7 @@ class Viser:
                 )
             )
 
+            first_packet = False
             time.sleep(0.1)
 
 
@@ -146,7 +192,7 @@ if __name__ == "__main__":
     from argparse import ArgumentParser
     parser = ArgumentParser(description="Visualize Gaussian model")
     parser.add_argument("--ply_path", type=str, required=True, help="Path to the Gaussian model PLY file")
-    parser.add_argument("--pose_path", type=str, required=True, help="Path to the estimated pose file")
+    parser.add_argument("--pose_path", type=str, default=None, help="Path to the estimated pose file (supports TUM and 4x4 matrix formats)")
     parser.add_argument("--mesh_path", type=str, default=None, help="Path to the mesh PLY file for visualization")
     args = parser.parse_args()
 

@@ -63,27 +63,6 @@
       #controls button:hover {
         background: rgba(60, 60, 60, 0.7);
       }
-      #btnSpread {
-        position: fixed;
-        right: 12px;
-        bottom: 12px;
-        z-index: 10;
-        padding: 8px 16px;
-        background: rgba(0, 0, 0, 0.55);
-        color: #e8e8e8;
-        font-size: 13px;
-        border-radius: 6px;
-        border: 1px solid #555;
-        cursor: pointer;
-        user-select: none;
-      }
-      #btnSpread:hover {
-        background: rgba(60, 60, 60, 0.7);
-      }
-      #btnSpread.active {
-        background: rgba(0, 140, 80, 0.6);
-        border-color: #00cc88;
-      }
     </style>
     <script type="importmap">
       {
@@ -107,7 +86,6 @@
       <label><input type="checkbox" id="toggleKf" /> Keyframes</label>
       <label><input type="checkbox" id="toggleFollow" /> Follow Camera</label>
     </div>
-    <button id="btnSpread">Spread</button>
     <script type="module">
       import * as THREE from "three";
       import { Line2 } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/lines/Line2.js";
@@ -115,7 +93,7 @@
       import { LineMaterial } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/lines/LineMaterial.js";
       import { LineSegments2 } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/lines/LineSegments2.js";
       import { LineSegmentsGeometry } from "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/lines/LineSegmentsGeometry.js";
-      import { SplatMesh, SparkRenderer, dyno } from "@sparkjsdev/spark";
+      import { SplatMesh, SparkRenderer } from "@sparkjsdev/spark";
 
       const hudStatus = document.getElementById("status");
       const hudErr = document.getElementById("err");
@@ -252,58 +230,6 @@
       });
 
       let latestC2W = null;
-
-      const animateT = dyno.dynoFloat(0);
-      let spreadActive = false;
-      let spreadBaseTime = 0;
-
-      function applySpreadModifier(mesh) {
-        mesh.objectModifier = dyno.dynoBlock(
-          { gsplat: dyno.Gsplat },
-          { gsplat: dyno.Gsplat },
-          ({ gsplat }) => {
-            const d = new dyno.Dyno({
-              inTypes: { gsplat: dyno.Gsplat, t: "float" },
-              outTypes: { gsplat: dyno.Gsplat },
-              globals: () => [],
-              statements: ({ inputs, outputs }) => dyno.unindentLines(`
-                ${outputs.gsplat} = ${inputs.gsplat};
-                float t = ${inputs.t};
-                float s = smoothstep(0.,10.,t-4.5)*10.;
-                vec3 scales = ${inputs.gsplat}.scales;
-                vec3 localPos = ${inputs.gsplat}.center;
-                float l = length(localPos.xz);
-                float tt = t*t*.4+.5;
-                localPos.xz *= min(1.,.3+max(0.,tt*.05));
-                ${outputs.gsplat}.center = localPos;
-                ${outputs.gsplat}.scales = max(mix(vec3(0.0),scales,min(tt-7.-l*2.5,1.)),mix(vec3(0.0),scales*.2,min(tt-1.-l*2.,1.)));
-                ${outputs.gsplat}.rgba = mix(vec4(.3),${inputs.gsplat}.rgba,clamp(tt-l*2.5-3.,0.,1.));
-              `),
-            });
-            gsplat = d.apply({ gsplat, t: animateT }).gsplat;
-            return { gsplat };
-          }
-        );
-        mesh.updateGenerator();
-      }
-
-      function removeSpreadModifier(mesh) {
-        mesh.objectModifier = null;
-        mesh.updateGenerator();
-      }
-
-      const btnSpread = document.getElementById("btnSpread");
-      btnSpread.addEventListener("click", () => {
-        spreadActive = !spreadActive;
-        btnSpread.classList.toggle("active", spreadActive);
-        if (spreadActive) {
-          spreadBaseTime = 0;
-          animateT.value = 0;
-          if (currentMesh) applySpreadModifier(currentMesh);
-        } else {
-          if (currentMesh) removeSpreadModifier(currentMesh);
-        }
-      });
 
       function jetRGB(t) {
         t = Math.max(0, Math.min(1, t));
@@ -576,7 +502,6 @@
           currentMesh = mesh;
           mesh.quaternion.set(1, 0, 0, 0);
           mesh.position.set(0, 0, 0);
-          if (spreadActive) applySpreadModifier(mesh);
           sceneRoot.add(mesh);
         } catch (e) {
           hudErr.textContent = String(e?.message || e);
@@ -630,11 +555,6 @@
           controls.pitch = Math.max(-1.4, controls.pitch - rotStep);
         }
         syncCamera();
-        if (spreadActive && currentMesh) {
-          spreadBaseTime += 1.0 / 60;
-          animateT.value = spreadBaseTime;
-          currentMesh.updateVersion();
-        }
         renderer.render(scene, camera);
       });
 

@@ -97,6 +97,23 @@ def render(viewpoint_camera,
         scales = pc.get_scaling[nonmask]
         rotations = pc.get_rotation[nonmask]
         shs = pc.get_features[nonmask]
+    elif render_option == 'active_highlight':
+        mask = pc.get_active_mask.squeeze(1)
+        inactive = ~mask
+        means3D = pc.get_xyz
+        means2D = screenspace_points
+        opacity = pc.get_opacity.clone()
+        opacity[inactive] = opacity[inactive] * 0.5
+        scales = pc.get_scaling
+        rotations = pc.get_rotation
+        shs = pc.get_features.clone()
+        lum_weights = torch.tensor([0.299, 0.587, 0.114], device=shs.device, dtype=shs.dtype)
+        dc = shs[inactive, 0:1, :]  # (M, 1, 3)
+        lum = (dc * lum_weights).sum(dim=-1, keepdim=True).expand_as(dc)
+        blend = 0.15
+        shs[inactive, 0:1, :] = (blend * dc + (1.0 - blend) * lum) * 0.5
+        if shs.shape[1] > 1:
+            shs[inactive, 1:, :] = shs[inactive, 1:, :] * blend
 
     colors_precomp = None
     cov3D_precomp = None

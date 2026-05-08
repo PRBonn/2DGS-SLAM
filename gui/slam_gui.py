@@ -160,6 +160,8 @@ class SLAM_GUI:
         self._last_est_traj_for_loops = None
         self._last_loop_edges_ij = None
 
+        self._gs_bbox_name = "gs_bbox_proxy"
+
         self.g_camera = util.Camera(self.window_h, self.window_w)
         self.window_gl = self.init_glfw()
         self._init_joystick()
@@ -214,44 +216,38 @@ class SLAM_GUI:
         self.panel.add_child(gui.Label("Viewpoint Options"))
 
         viewpoint_tile = gui.Horiz(0.5 * em, gui.Margins(margin))
-        vp_subtile1 = gui.Vert(0.5 * em, gui.Margins(margin))
-        vp_subtile2 = gui.Vert(0.5 * em, gui.Margins(margin))
-
-        chbox_tile = gui.Horiz(0.5 * em, gui.Margins(margin))
         self.followcam_chbox = gui.Checkbox("Follow Camera")
         self.followcam_chbox.checked = True
-        chbox_tile.add_child(self.followcam_chbox)
+        viewpoint_tile.add_child(self.followcam_chbox)
 
         self.staybehind_chbox = gui.Checkbox("From Behind")
         self.staybehind_chbox.checked = True
-        chbox_tile.add_child(self.staybehind_chbox)
+        viewpoint_tile.add_child(self.staybehind_chbox)
 
         self.fly_chbox = gui.Checkbox("Fly")
         self.fly_chbox.checked = False
         self.fly_chbox.set_on_checked(self._set_fly_mouse_mode)
-        chbox_tile.add_child(self.fly_chbox)
+        viewpoint_tile.add_child(self.fly_chbox)
 
-        vp_subtile1.add_child(chbox_tile)
-
-        combo_tile = gui.Vert(0.5 * em, gui.Margins(margin))
         self.combo_kf = gui.Combobox()
         self.combo_kf.set_on_selection_changed(self._on_combo_kf)
-        combo_tile.add_child(gui.Label("Viewpoint list"))
-        combo_tile.add_child(self.combo_kf)
-        vp_subtile2.add_child(combo_tile)
+        viewpoint_tile.add_child(self.combo_kf)
 
-        viewpoint_tile.add_child(vp_subtile1)
-        viewpoint_tile.add_child(vp_subtile2)
         self.panel.add_child(viewpoint_tile)
 
-        self.panel.add_child(gui.Label("3D Objects"))
+        self.panel.add_child(gui.Label("3D Entities"))
         chbox_tile_3dobj = gui.Horiz(0.5 * em, gui.Margins(margin))
-        self.cameras_chbox = gui.Checkbox("Cameras")
+
+        self.gs_chbox = gui.Checkbox("GS")
+        self.gs_chbox.checked = True
+        chbox_tile_3dobj.add_child(self.gs_chbox)
+
+        self.cameras_chbox = gui.Checkbox("Camera")
         self.cameras_chbox.checked = True
         self.cameras_chbox.set_on_checked(self._on_cameras_chbox)
         chbox_tile_3dobj.add_child(self.cameras_chbox)
 
-        self.keyframes_chbox = gui.Checkbox("Keyframes")
+        self.keyframes_chbox = gui.Checkbox("Keyframe")
         self.keyframes_chbox.checked = False
         self.keyframes_chbox.set_on_checked(self._on_keyframes_chbox)
         chbox_tile_3dobj.add_child(self.keyframes_chbox)
@@ -260,6 +256,11 @@ class SLAM_GUI:
         self.mesh_chbox.checked = False
         self.mesh_chbox.set_on_checked(self._on_mesh_chbox)
         chbox_tile_3dobj.add_child(self.mesh_chbox)
+
+        self.mesh_normal_chbox = gui.Checkbox("Mesh Normal")
+        self.mesh_normal_chbox.checked = False
+        self.mesh_normal_chbox.set_on_checked(self._on_mesh_normal_chbox)
+        chbox_tile_3dobj.add_child(self.mesh_normal_chbox)
         self.panel.add_child(chbox_tile_3dobj)
 
         chbox_tile_traj = gui.Horiz(0.5 * em, gui.Margins(margin))
@@ -320,30 +321,36 @@ class SLAM_GUI:
         slider_tile.add_child(self.scaling_slider)
         self.panel.add_child(slider_tile)
 
+        btn_tile = gui.Horiz(0.5 * em, gui.Margins(margin))
+
         self.screenshot_btn = gui.Button("Screenshot")
-        self.screenshot_btn.set_on_clicked(
-            self._on_screenshot_btn
-        )  # set the callback function
-        self.panel.add_child(self.screenshot_btn)
+        self.screenshot_btn.set_on_clicked(self._on_screenshot_btn)
+        btn_tile.add_child(self.screenshot_btn)
+
+        self.reset_view_btn = gui.Button("Reset View")
+        self.reset_view_btn.set_on_clicked(self._on_reset_view_btn)
+        btn_tile.add_child(self.reset_view_btn)
+
+        self.panel.add_child(btn_tile)
 
         tab_margins = gui.Margins(0, int(np.round(0.5 * em)), 0, 0)
         tabs = gui.TabControl()
 
         tab_info = gui.Vert(0, tab_margins)
         self.output_frame_id = gui.Label("Current Frame: ")
-        self.keyframes_info = gui.Label("# Keyframes: —")
-        self.loop_closures_info = gui.Label("# Loop Closures: —")
+        self._num_keyframes = "—"
+        self._num_loop_closures = "—"
+        self.kf_loop_info = gui.Label("# Keyframes: —   |   # Loop Closures: —")
         self.gaussians_info = gui.Label("# Gaussians: —")
         self.freq_info = gui.Label("Render FPS: —")
-        self.map_mem_info = gui.Label("Map Memory: —")
-        self.gpu_mem_info = gui.Label("GPU Memory: —")
+        self._map_mem_str = "—"
+        self._gpu_mem_str = "—"
+        self.mem_info = gui.Label("Map Memory: —   |   GPU Memory: —")
         tab_info.add_child(self.output_frame_id)
-        tab_info.add_child(self.keyframes_info)
-        tab_info.add_child(self.loop_closures_info)
+        tab_info.add_child(self.kf_loop_info)
         tab_info.add_child(self.gaussians_info)
         tab_info.add_child(self.freq_info)
-        tab_info.add_child(self.map_mem_info)
-        tab_info.add_child(self.gpu_mem_info)
+        tab_info.add_child(self.mem_info)
 
         self.in_rgb_widget = gui.ImageWidget()
         self.in_depth_widget = gui.ImageWidget()
@@ -594,9 +601,28 @@ class SLAM_GUI:
             self.mesh_chbox.checked = False
             return
         if is_checked:
+            self.mesh_normal_chbox.checked = False
             self.widget3d.scene.remove_geometry(self.mesh_name)
             self.widget3d.scene.add_geometry(
                 self.mesh_name, self.mesh_o3d, self.mesh_material
+            )
+        else:
+            self.widget3d.scene.remove_geometry(self.mesh_name)
+
+    def _on_mesh_normal_chbox(self, is_checked):
+        if self.mesh_o3d is None:
+            self.mesh_normal_chbox.checked = False
+            return
+        if is_checked:
+            self.mesh_chbox.checked = False
+            self.widget3d.scene.remove_geometry(self.mesh_name)
+            mesh_normal = o3d.geometry.TriangleMesh(self.mesh_o3d)
+            mesh_normal.compute_vertex_normals()
+            normals = np.asarray(mesh_normal.vertex_normals)
+            colors = (normals + 1.0) * 0.5
+            mesh_normal.vertex_colors = o3d.utility.Vector3dVector(colors)
+            self.widget3d.scene.add_geometry(
+                self.mesh_name, mesh_normal, self.mesh_material
             )
         else:
             self.widget3d.scene.remove_geometry(self.mesh_name)
@@ -776,6 +802,26 @@ class SLAM_GUI:
         path_rend = (save_dir / "screenshot.png").resolve()
         Log("Screenshot saved:", path_gui, "and", path_rend, tag="GUI")
 
+    def _update_gs_bbox_proxy(self, xyz_tensor):
+        pts = xyz_tensor.detach().cpu().numpy().astype(np.float64)
+        if pts.shape[0] < 2:
+            return
+        pcd = o3d.geometry.PointCloud()
+        pcd.points = o3d.utility.Vector3dVector(pts)
+        self.widget3d.scene.remove_geometry(self._gs_bbox_name)
+        mat = rendering.MaterialRecord()
+        mat.shader = "defaultUnlit"
+        mat.point_size = 0.0
+        self.widget3d.scene.add_geometry(self._gs_bbox_name, pcd, mat)
+        self.widget3d.scene.show_geometry(self._gs_bbox_name, False)
+
+    def _on_reset_view_btn(self):
+        bounds = self.widget3d.scene.bounding_box
+        self.widget3d.setup_camera(60.0, bounds, bounds.get_center())
+        self.fly_chbox.checked = False
+        self.widget3d.set_view_controls(gui.SceneWidget.Controls.ROTATE_CAMERA_SPHERE)
+        self.joystick_enabled = False
+
     @staticmethod
     def resize_img(img, width):
         height = int(width * img.shape[0] / img.shape[1])
@@ -801,12 +847,12 @@ class SLAM_GUI:
             return
 
         if gaussian_packet.num_keyframes is not None:
-            self.keyframes_info.text = "# Keyframes: {}".format(
-                gaussian_packet.num_keyframes
-            )
+            self._num_keyframes = gaussian_packet.num_keyframes
         if gaussian_packet.num_loop_closures is not None:
-            self.loop_closures_info.text = "# Loop Closures: {}".format(
-                gaussian_packet.num_loop_closures
+            self._num_loop_closures = gaussian_packet.num_loop_closures
+        if gaussian_packet.num_keyframes is not None or gaussian_packet.num_loop_closures is not None:
+            self.kf_loop_info.text = "# Keyframes: {}   |   # Loop Closures: {}".format(
+                self._num_keyframes, self._num_loop_closures
             )
 
         if (
@@ -822,9 +868,13 @@ class SLAM_GUI:
 
         if gaussian_packet.has_gaussians:
             self.gaussian_cur = gaussian_packet
+            self._update_gs_bbox_proxy(gaussian_packet.get_xyz)
             mm = _estimate_gaussian_packet_memory_mb(gaussian_packet)
             if mm is not None:
-                self.map_mem_info.text = "Map Memory: {:.1f} MB".format(mm)
+                self._map_mem_str = "{:.1f} MB".format(mm)
+                self.mem_info.text = "Map Memory: {}   |   GPU Memory: {}".format(
+                    self._map_mem_str, self._gpu_mem_str
+                )
             self.init = True
         if gaussian_packet.current_frame is not None:
             self.output_frame_id.text = "Current Frame: {}".format(
@@ -881,8 +931,11 @@ class SLAM_GUI:
             )
 
         if gaussian_packet.gpu_mem_usage_gb is not None:
-            self.gpu_mem_info.text = "GPU Memory: {:.2f} GB".format(
+            self._gpu_mem_str = "{:.2f} GB".format(
                 gaussian_packet.gpu_mem_usage_gb
+            )
+            self.mem_info.text = "Map Memory: {}   |   GPU Memory: {}".format(
+                self._map_mem_str, self._gpu_mem_str
             )
 
         self._maybe_update_trajectories(gaussian_packet)
@@ -956,7 +1009,7 @@ class SLAM_GUI:
 
     def rasterise(self, current_cam):
         if self.active_chbox.checked is True:
-            state = "active"
+            state = "active_highlight"
         else:
             state = "all"
         t_render0 = time.perf_counter()
@@ -964,6 +1017,7 @@ class SLAM_GUI:
             self.time_shader_chbox.checked
             and self.gaussian_cur is not None
             and type(self.gaussian_cur) == GaussianPacket
+            and self.gaussian_cur.unique_kfIDs.numel() > 0
         ):
             features = self.gaussian_cur.get_features.clone()
             kf_ids = self.gaussian_cur.unique_kfIDs.float()
@@ -1036,6 +1090,9 @@ class SLAM_GUI:
 
     def render_gui(self):
         if not self.init:
+            return
+        if not self.gs_chbox.checked:
+            self.widget3d.scene.set_background([0, 0, 0, 1])
             return
         current_cam = self.get_current_cam()
         if current_cam is None:

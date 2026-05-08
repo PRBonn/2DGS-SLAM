@@ -159,7 +159,7 @@ class FrontEnd(mp.Process):
         self._last_spark_export_time = 0.0
         self._shutdown_spark_live = None
 
-        self.log_loop_pgo = bool(rs.get("log_loop_pgo", False))
+        self.verbose = bool(rs.get("verbose", False))
         self.log_mesh_cleaning = bool(rs.get("log_mesh_cleaning", False))
 
     
@@ -552,7 +552,7 @@ class FrontEnd(mp.Process):
         if self.enable_revisit_loop:
             loop_id = self.detect_loop_by_revisit(query_depth, query_camera)
             if loop_id > 0 and self.is_this_loop_necessary(loop_id):
-                if self.log_loop_pgo:
+                if self.verbose:
                     Log(f"revisit loop: {loop_id}", tag="Loop")
                 if self.reloc_method == 'mast3r':
                     loop_cam = self.reloc_with_mast3r(query_camera, query_resized_img, loop_id, loop_type='revisit')
@@ -762,7 +762,7 @@ class FrontEnd(mp.Process):
             loop_tracking_mask = loop_tracking_mask.squeeze(0).squeeze(0)
 
             overlap_ratio = loop_tracking_mask.sum()/(raw_h * raw_w)
-            if self.log_loop_pgo:
+            if self.verbose:
                 Log(f"overlap_ratio: {overlap_ratio}", tag="Loop")
             if overlap_ratio < self.loop_overlap_ratio:
                 return None
@@ -787,7 +787,7 @@ class FrontEnd(mp.Process):
         _, depth_avg_error = self.tracking(loop_cam, loop_frame.rgb, loop_frame.depth, 
                                            grad_mask, loop_tracking_mask, render_option='active')
 
-        if self.log_loop_pgo:
+        if self.verbose:
             Log(f"depth avg error: {depth_avg_error}", tag="Loop")
         if depth_avg_error > self.depth_error_threshold:
             return None
@@ -981,7 +981,8 @@ class FrontEnd(mp.Process):
                         traj_ply_file = os.path.join(self.save_dir, f"traj_{nt}.ply")
                         self.save_trajectory_ply(traj_ply_file)
                         Log("save trajectory point cloud to:", traj_ply_file)
-                        Log(f"To offline inspect the map, use: python viser.py --ply_path {file_name} --pose_path {pose_file_name} --mesh_path {mesh_file_name}")
+                        if self.verbose:
+                            Log(f"To offline inspect the map, use: python viser.py --ply_path {file_name} --pose_path {traj_tum_file} --mesh_path {mesh_file_name}")
                         dt = time.perf_counter() - t_slam0
                         nf = len(self.cameras)
                         # Log(f"Total time \\[s\\] {dt:.4f}", tag="Eval")
@@ -1032,7 +1033,7 @@ class FrontEnd(mp.Process):
                     if loop_cam is not None :
                         self.last_loop_at_len_kf = len(self.key_frame_ids)
                         self.last_loop_id = loop_cam.uid
-                        if self.log_loop_pgo:
+                        if self.verbose:
                             Log("Loop detected at frame: ", loop_cam.uid)
                         # see current frame as a key frame
     
@@ -1048,7 +1049,7 @@ class FrontEnd(mp.Process):
     
                         self.requested_pgo += 1
     
-                        self.eval_pose(cur_frame_idx, quiet=not self.log_loop_pgo)
+                        self.eval_pose(cur_frame_idx, quiet=not self.verbose)
     
                         cur_frame_idx += step
                         pbar.update(1)
@@ -1077,7 +1078,7 @@ class FrontEnd(mp.Process):
                         self.requested_keyframe += 1
     
                         if len(self.key_frame_ids) % self.save_trj_kf_intv == 0:
-                            self.eval_pose(cur_frame_idx, quiet=not self.log_loop_pgo)
+                            self.eval_pose(cur_frame_idx, quiet=not self.verbose)
     
                     cur_frame_idx += step
                     pbar.update(1)
@@ -1155,7 +1156,7 @@ class FrontEnd(mp.Process):
     
                     elif data[0] == "pgo":
                         self.sync_backend(data)
-                        self.eval_pose(cur_frame_idx, quiet=not self.log_loop_pgo)
+                        self.eval_pose(cur_frame_idx, quiet=not self.verbose)
                         self.requested_pgo -= 1
     
                     elif data[0] == "init":
@@ -1174,8 +1175,9 @@ class FrontEnd(mp.Process):
                         mesh_file_name = os.path.join(self.save_dir, f"refined_mesh_{nt}.ply")
                         self.get_mesh(mesh_file_name)
                         Log("save the mesh to:", mesh_file_name)
-                        pose_file_name = os.path.join(self.save_dir, f"key_pose_{nt}.txt")
-                        Log(f"To offline inspect the map, use: python viser.py --ply_path {file_name} --pose_path {pose_file_name} --mesh_path {mesh_file_name}")
+                        if self.verbose:
+                            pose_file_name = os.path.join(self.save_dir, f"key_pose_{nt}.txt")
+                            Log(f"To offline inspect the map, use: python viser.py --ply_path {file_name} --pose_path {pose_file_name} --mesh_path {mesh_file_name}")
                         self._save_run_metrics_csv(ate_kf, ate_all, rend_out)
                         break
     

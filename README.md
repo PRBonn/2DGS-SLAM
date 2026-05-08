@@ -117,6 +117,13 @@ Update the `raw_folder` and `processed_folder` paths in the script before runnin
 
 ## Usage
 
+### Show help message:
+
+```bash
+python slam.py -h
+```
+
+
 ### Running SLAM
 
 ```bash
@@ -159,7 +166,7 @@ bash scripts/run_tum.sh
 Visualize the reconstructed Gaussian map and colorized mesh:
 
 ```bash
-python viser.py --ply_path <path_to_ply> --pose_path <path_to_poses> --mesh_path <path_to_mesh_ply>
+python viser.py --ply_path <path_to_gaussians_ply> --pose_path <path_to_poses> --mesh_path <path_to_mesh_ply>
 ```
 
 

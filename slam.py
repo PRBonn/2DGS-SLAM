@@ -243,7 +243,7 @@ def seed_everything(seed):
         torch.backends.cudnn.benchmark = False
 
 
-app = typer.Typer(invoke_without_command=True, no_args_is_help=True, add_completion=False)
+app = typer.Typer(invoke_without_command=True, no_args_is_help=True, add_completion=False, context_settings={"help_option_names": ["-h", "--help"]})
 
 
 @app.callback(invoke_without_command=True)
@@ -251,14 +251,23 @@ def main(
     config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
     visualize: Annotated[bool, typer.Option("-v", "--visualize", help="Open GUI")] = False,
     spark_live: Annotated[bool, typer.Option("-w", "--spark-live", help="Enable web visualization of GS using Spark")] = False,
-    log_on: Annotated[
+    verbose: Annotated[
         bool,
         typer.Option(
             "-l",
-            "--log_on",
-            help="Print verbose logs.",
+            "--verbose",
+            help="Verbose console output.",
         ),
     ] = False,
+    refine: Annotated[
+        Optional[int],
+        typer.Option(
+            "-r",
+            "--refine",
+            metavar="ITERS",
+            help="Enable map refinement after SLAM with the given number of iterations (overrides YAML).",
+        ),
+    ] = None,
     range_: Annotated[
         Optional[str],
         typer.Option(
@@ -277,7 +286,10 @@ def main(
         cfg.setdefault("Results", {})["use_gui"] = True
     if spark_live:
         cfg.setdefault("Results", {})["spark_live_enable"] = True
-    cfg.setdefault("Results", {})["log_loop_pgo"] = log_on
+    cfg.setdefault("Results", {})["verbose"] = verbose
+    if refine is not None:
+        cfg.setdefault("Results", {})["map_refine"] = True
+        cfg["Results"]["map_refine_iterations"] = refine
     if rng is not None:
         _apply_dataset_frame_overrides(cfg, rng)
 

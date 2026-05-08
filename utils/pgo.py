@@ -15,7 +15,7 @@ class PoseGraphManager:
     def __init__(self, config):
 
         self.config = config
-        self.silence = not config.get("Results", {}).get("log_loop_pgo", False)
+        self.silence = not bool(config.get("Results", {}).get("verbose", False))
 
         self.fixed_cov = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([1e-9, 1e-9, 1e-9, 1e-9, 1e-9, 1e-9])
