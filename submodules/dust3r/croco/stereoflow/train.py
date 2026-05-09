@@ -105,7 +105,7 @@ def main(args):
 
     # Prepare model
     assert os.path.isfile(args.pretrained)
-    ckpt = torch.load(args.pretrained, 'cpu')
+    ckpt = torch.load(args.pretrained, map_location='cpu', weights_only=False)
     croco_args = croco_args_from_ckpt(ckpt)
     croco_args['img_size'] = (args.crop[0], args.crop[1])
     print('Croco args: '+str(croco_args))
@@ -151,7 +151,7 @@ def main(args):
         print(f"Starting from an other model's weights: {args.start_from}")
         best_so_far = None
         args.start_epoch = 0
-        ckpt = torch.load(args.start_from, 'cpu')
+        ckpt = torch.load(args.start_from, map_location='cpu', weights_only=False)
         msg = model_without_ddp.load_state_dict(ckpt['model'], strict=False)
         print(msg)
     else:

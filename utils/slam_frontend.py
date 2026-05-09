@@ -918,11 +918,17 @@ class FrontEnd(mp.Process):
             try:
                 from utils.spark_live_server import start_spark_live_server
 
-                self._shutdown_spark_live = start_spark_live_server(
+                self._shutdown_spark_live, spark_port = start_spark_live_server(
                     self._spark_live_dir, self._spark_live_port
                 )
+                self._spark_live_port = spark_port
             except OSError as e:
-                Log("Spark live server failed to start (port in use?): ", str(e), tag="Spark")
+                Log(
+                    "Spark live server failed to start — check spark_live_port in config ",
+                    "(or free the port, e.g. kill a previous slam.py -w): ",
+                    str(e),
+                    tag="Spark",
+                )
                 self._spark_live_enabled = False
 
         vis_copy_count = 0

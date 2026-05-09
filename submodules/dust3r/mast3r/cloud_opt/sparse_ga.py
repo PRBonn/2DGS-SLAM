@@ -74,7 +74,7 @@ class SparseGA():
         base_focals = []
         anchors = {}
         for i, canon_path in enumerate(self.canonical_paths):
-            (canon, canon2, conf), focal = torch.load(canon_path, map_location=device)
+            (canon, canon2, conf), focal = torch.load(canon_path, map_location=device, weights_only=False)
             confs.append(conf)
             base_focals.append(focal)
 
@@ -211,7 +211,7 @@ def sparse_scene_optimizer(imgs, subsample, imsizes, pps, base_focals, core_dept
     # intrinsics parameters
     if shared_intrinsics:
         # Optimize a single set of intrinsics for all cameras. Use averages as init.
-        confs = torch.stack([torch.load(pth)[0][2].mean() for pth in canonical_paths]).to(pps)
+        confs = torch.stack([torch.load(pth, weights_only=False)[0][2].mean() for pth in canonical_paths]).to(pps)
         weighting = confs / confs.sum()
         pp = nn.Parameter((weighting @ pps).to(dtype))
         pps = [pp for _ in range(len(imgs))]
@@ -506,7 +506,7 @@ def make_dense_pts3d(intrinsics, cam2w, depthmaps, canonical_paths, subsample, d
     anchors = {}
     confs = []
     for i, canon_path in enumerate(canonical_paths):
-        (canon, canon2, conf), focal = torch.load(canon_path, map_location=device)
+        (canon, canon2, conf), focal = torch.load(canon_path, map_location=device, weights_only=False)
         confs.append(conf)
         base_focals.append(focal)
         H, W = conf.shape
@@ -536,7 +536,7 @@ def forward_mast3r(pairs, model, cache_path, desc_conf='desc_conf',
         path_corres2 = cache_path + f'/corres_conf={desc_conf}_{subsample=}/{idx2}-{idx1}.pth'
 
         if os.path.isfile(path_corres2) and not os.path.isfile(path_corres):
-            score, (xy1, xy2, confs) = torch.load(path_corres2)
+            score, (xy1, xy2, confs) = torch.load(path_corres2, weights_only=False)
             torch.save((score, (xy2, xy1, confs)), path_corres)
 
         if not all(os.path.isfile(p) for p in (path1, path2, path_corres)):
@@ -643,7 +643,7 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
             cache = os.path.join(cache_path, 'canon_views', hash_md5(img) + f'_{subsample=}_{kw=}.pth')
             canonical_paths.append(cache)
         try:
-            (canon, canon2, cconf), focal = torch.load(cache, map_location=device)
+            (canon, canon2, cconf), focal = torch.load(cache, map_location=device, weights_only=False)
         except IOError:
             # cache does not exist yet, we create it!
             canon = focal = None
@@ -657,7 +657,7 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
         for (img1, img2), ((path1, path2), path_corres) in tmp_pairs.items():
             score = None
             if img == img1:
-                X, C, X2, C2 = torch.load(path1, map_location=device)
+                X, C, X2, C2 = torch.load(path1, map_location=device, weights_only=False)
                 score, (xy1, xy2, confs) = load_corres(path_corres, device, min_conf_thr)
                 pixels[img2] = xy1, confs
                 if img not in preds_21:
@@ -666,7 +666,7 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
                 preds_21[img][img2] = X2[::subsample, ::subsample].reshape(-1, 3), C2[::subsample, ::subsample].ravel()
 
             if img == img2:
-                X, C, X2, C2 = torch.load(path2, map_location=device)
+                X, C, X2, C2 = torch.load(path2, map_location=device, weights_only=False)
                 score, (xy1, xy2, confs) = load_corres(path_corres, device, min_conf_thr)
                 pixels[img1] = xy2, confs
                 if img not in preds_21:
@@ -715,7 +715,7 @@ def prepare_canonical_data(imgs, tmp_pairs, subsample, order_imgs=False, min_con
 
 
 def load_corres(path_corres, device, min_conf_thr):
-    score, (xy1, xy2, confs) = torch.load(path_corres, map_location=device)
+    score, (xy1, xy2, confs) = torch.load(path_corres, map_location=device, weights_only=False)
     valid = confs > min_conf_thr if min_conf_thr else slice(None)
     # valid = (xy1 > 0).all(dim=1) & (xy2 > 0).all(dim=1) & (xy1 < 512).all(dim=1) & (xy2 < 512).all(dim=1)
     # print(f'keeping {valid.sum()} / {len(valid)} correspondences')
@@ -921,7 +921,7 @@ def spectral_projection_depth(K, depthmap, subsample, k=64, cache_path='',
     try:
         if cache_path:
             cache_path = cache_path + f'_{k=}_norm={normalized_cuts}_{gamma=}.pth'
-        lora_proj = torch.load(cache_path, map_location=K.device)
+        lora_proj = torch.load(cache_path, map_location=K.device, weights_only=False)
 
     except IOError:
         # reconstruct 3d points in camera coordinates

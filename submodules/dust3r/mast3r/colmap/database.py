@@ -186,10 +186,10 @@ def get_im_matches_from_cache(pairs, cache_path, desc_conf, subsample,
 
         path_corres = cache_path + f'/corres_conf={desc_conf}_{subsample=}/{corres_idx1}-{corres_idx2}.pth'
         if os.path.isfile(path_corres):
-            score, (xy1, xy2, confs) = torch.load(path_corres, map_location=device)
+            score, (xy1, xy2, confs) = torch.load(path_corres, map_location=device, weights_only=False)
         else:
             path_corres = cache_path + f'/corres_conf={desc_conf}_{subsample=}/{corres_idx2}-{corres_idx1}.pth'
-            score, (xy2, xy1, confs) = torch.load(path_corres, map_location=device)
+            score, (xy2, xy1, confs) = torch.load(path_corres, map_location=device, weights_only=False)
         mask = confs >= conf_thr
         matches_im0 = xy1[mask].cpu().numpy()
         matches_im1 = xy2[mask].cpu().numpy()

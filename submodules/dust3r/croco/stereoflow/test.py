@@ -51,7 +51,7 @@ def get_args_parser():
 def _load_model_and_criterion(model_path, do_load_metrics, device):
     print('loading model from', model_path)
     assert os.path.isfile(model_path)
-    ckpt = torch.load(model_path, 'cpu')
+    ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
     
     ckpt_args = ckpt['args']
     task = ckpt_args.task

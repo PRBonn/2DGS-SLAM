@@ -136,7 +136,7 @@ class RetrievalModel(nn.Module):
         self.nfeat = nfeat
         self.pretrained_retrieval = pretrained_retrieval
         if self.pretrained_retrieval is not None:
-            ckpt = torch.load(pretrained_retrieval, 'cpu')
+            ckpt = torch.load(pretrained_retrieval, map_location='cpu', weights_only=False)
             msg = self.load_state_dict(ckpt['model'], strict=False)
             assert len(msg.unexpected_keys) == 0 and all(k.startswith('backbone')
                                                          or k.startswith('postwhiten') for k in msg.missing_keys)

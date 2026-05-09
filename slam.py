@@ -1,3 +1,4 @@
+import os
 import random
 import re
 import signal
@@ -89,6 +90,39 @@ def _apply_dataset_frame_overrides(cfg: dict, triple: tuple[int, int, int]) -> N
     ds["frame_begin"] = b
     ds["frame_end"] = e
     ds["frame_step"] = st
+
+
+def _apply_dataset_base_override(cfg: dict, dataset_base: Optional[str]) -> None:
+    """Map YAML paths like datasets/<rest> onto *dataset_base* / <rest> (trusted local data only)."""
+    if not dataset_base or not str(dataset_base).strip():
+        return
+    ds = cfg.get("Dataset")
+    if not ds or "dataset_path" not in ds:
+        return
+    raw = str(ds["dataset_path"]).strip()
+    if not raw:
+        return
+
+    rel = Path(raw)
+    if rel.is_absolute():
+        Log(
+            "Ignoring --dataset-base because Dataset.dataset_path is absolute: ",
+            raw,
+            tag="Dataset",
+        )
+        return
+
+    parts = rel.parts
+    if parts and parts[0].lower() == "datasets":
+        suffix = Path(*parts[1:]) if len(parts) > 1 else Path()
+    else:
+        suffix = rel
+
+    root = Path(os.path.expanduser(str(dataset_base).strip()))
+    root = root.resolve(strict=False)
+    new_path = os.path.normpath(str(root / suffix))
+    ds["dataset_path"] = new_path
+    Log("dataset_path -> ", new_path, " (dataset base override)", tag="Dataset")
 
 
 def _check_frame_span(cfg: dict, n_ds: int) -> None:
@@ -251,6 +285,15 @@ def main(
     config: Annotated[Path, typer.Option("--config", exists=True, dir_okay=False)],
     visualize: Annotated[bool, typer.Option("-v", "--visualize", help="Open GUI")] = False,
     spark_live: Annotated[bool, typer.Option("-w", "--spark-live", help="Enable web visualization of GS using Spark")] = False,
+    spark_live_port: Annotated[
+        Optional[int],
+        typer.Option(
+            "--spark-live-port",
+            min=1,
+            max=65535,
+            help="HTTP port for Spark viewer (default from YAML Results.spark_live_port, often 8765).",
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -276,6 +319,19 @@ def main(
             help="Half-open [BEGIN, END) with STEP; overrides YAML (e.g. --range 0 1500 2 or --range 0:1500:2).",
         ),
     ] = None,
+    dataset_base: Annotated[
+        Optional[Path],
+        typer.Option(
+            "-d",
+            "--data-root",
+            help="Directory that replaces the default `datasets/` root from the YAML Dataset.dataset_path.",
+            exists=False,
+            file_okay=False,
+            dir_okay=True,
+            writable=False,
+            resolve_path=False,
+        ),
+    ] = None,
 ) -> None:
     rng = _parse_range_str(range_)
     mp.set_start_method("spawn")
@@ -286,12 +342,17 @@ def main(
         cfg.setdefault("Results", {})["use_gui"] = True
     if spark_live:
         cfg.setdefault("Results", {})["spark_live_enable"] = True
+    if spark_live_port is not None:
+        cfg.setdefault("Results", {})["spark_live_port"] = spark_live_port
     cfg.setdefault("Results", {})["verbose"] = verbose
     if refine is not None:
         cfg.setdefault("Results", {})["map_refine"] = True
         cfg["Results"]["map_refine_iterations"] = refine
     if rng is not None:
         _apply_dataset_frame_overrides(cfg, rng)
+
+    db = str(dataset_base) if dataset_base is not None else None
+    _apply_dataset_base_override(cfg, db)
 
     seed_everything(42)
     SLAM(cfg).run()
