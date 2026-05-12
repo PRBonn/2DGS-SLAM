@@ -41,21 +41,21 @@ Training:
   edge_threshold: 1.1
   rgb_boundary_threshold: 0.01
   depth_min_threshold: 0.1
-  depth_max_threshold: 4.0
-  kf_max_translation: 0.35
+  depth_max_threshold: 3.0
+  kf_max_translation: 0.5
   kf_overlap: 0.85
   kf_min_overlap: 0.75
   tracking_lambda_depth: 0.5
   tracking_lambda_grad: 5.0
-  depth_error_threshold: 0.08
+  depth_error_threshold: 0.2
   use_odom_init_guess: True
   lr:
     cam_rot_delta: 0.003
     cam_trans_delta: 0.0015
   # Mapping
   voxel_size: 0.05
-  key_frame_iter_num: 15
-  active_train_num: 5
+  key_frame_iter_num: 20
+  active_train_num: 7
   inactive_train_num: 3
   lambda_ssim: 0.125
   lambda_normal: 0.02
@@ -77,7 +77,7 @@ Training:
   pgo_max_iter: 50
   pgo_tran_std: 0.01
   pgo_rot_std: 0.03
-  pgo_error_thre_frame: 200.0
+  pgo_error_thre_frame: 500.0
   pgo_with_all_frames: True
 
 ## 3DGS default parameters

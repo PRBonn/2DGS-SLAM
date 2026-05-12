@@ -37,7 +37,7 @@ Training:
   kf_max_translation: 0.35
   kf_overlap: 0.9
   kf_min_overlap: 0.8
-  tracking_lambda_depth: 5
+  tracking_lambda_depth: 5.0
   tracking_lambda_grad: 5.0
   depth_error_threshold: 0.045
   lr:
