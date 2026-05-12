@@ -3,6 +3,7 @@ import random
 import re
 import signal
 import sys
+import time
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -147,12 +148,18 @@ class SLAM:
         self.model_params, self.opt_params = (model_params, opt_params)
 
         self.monocular = self.config["Dataset"]["sensor_type"] == "monocular"
+        self.live_mode = self.config["Dataset"]["type"] == "realsense"
+
+        if self.live_mode:
+            self.config.setdefault("Results", {})["use_gui"] = True
+
         self.use_gui = self.config["Results"]["use_gui"]
 
         self.dataset = load_dataset(model_params, model_params.source_path, config=config)
         assert len(self.dataset) >= 2
 
-        _check_frame_span(self.config, len(self.dataset))
+        if not self.live_mode:
+            _check_frame_span(self.config, len(self.dataset))
 
         raw_w, raw_h = self.dataset.width, self.dataset.height
         raw_K = self.dataset.K
@@ -232,9 +239,7 @@ class SLAM:
         if self.use_gui and self.params_gui is not None:
             self.gui_process = mp.Process(target=slam_gui.run, args=(self.params_gui,))
             self.gui_process.start()
-            import time as _t
-
-            _t.sleep(3)
+            time.sleep(3)
 
         backend_process.start()
         self.frontend.run()
@@ -253,6 +258,8 @@ class SLAM:
 
         Log("Backend stopped and joined the main thread")
         if self.use_gui:
+            Log("Keeping viewer open for 30 seconds before shutting down...", tag="GUI")
+            time.sleep(30)
             self.shutdown_gui()
 
         for q in (
@@ -302,6 +309,14 @@ def main(
             help="Verbose console output.",
         ),
     ] = False,
+    odom_only: Annotated[
+        bool,
+        typer.Option(
+            "-o",
+            "--odom-only",
+            help="Odometry-only: disable loop closure (Training.enable_loop_closure=False); overrides YAML.",
+        ),
+    ] = False,
     refine: Annotated[
         Optional[int],
         typer.Option(
@@ -345,6 +360,8 @@ def main(
     if spark_live_port is not None:
         cfg.setdefault("Results", {})["spark_live_port"] = spark_live_port
     cfg.setdefault("Results", {})["verbose"] = verbose
+    if odom_only:
+        cfg.setdefault("Training", {})["enable_loop_closure"] = False
     if refine is not None:
         cfg.setdefault("Results", {})["map_refine"] = True
         cfg["Results"]["map_refine_iterations"] = refine

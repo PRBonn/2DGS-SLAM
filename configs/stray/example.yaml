@@ -1,0 +1,38 @@
+inherit_from: "configs/stray/base_config.yaml"
+
+## Example config for a StrayScanner scene preprocessed at 640x480.
+##
+## To preprocess a StrayScanner recording:
+##   python scripts/stray_preprocess.py \
+##       --input <stray_recording_dir> \
+##       --output datasets/stray/my_scene \
+##       --resolution 640 480 \
+##       --confidence-threshold 1
+##
+## Then update the values below to match the preprocessor output.
+
+Dataset:
+  sequence_name: "my_scene"
+  dataset_path: "datasets/stray/my_scene"
+  Calibration:
+    # Intrinsics for iPhone 16 Pro (1920x1440 native) scaled to 640x480:
+    #   fx = 1351.35 * (640/1920) = 450.45
+    #   fy = 1351.35 * (480/1440) = 450.45
+    #   cx = 954.52 * (640/1920) = 318.17
+    #   cy = 724.49 * (480/1440) = 241.50
+    # Adjust these values based on your device and chosen resolution.
+    # The preprocessor prints exact scaled values — use those.
+    fx: 450.45
+    fy: 450.45
+    cx: 318.17
+    cy: 241.50
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+    distorted: False
+    width: 640
+    height: 480
+    depth_scale: 1.0
+    depth_noise_scale: 0.02

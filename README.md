@@ -114,6 +114,24 @@ python scripts/scannet_preprocess.py
 
 Update the `raw_folder` and `processed_folder` paths in the script before running.
 
+### Stray Scanner (iPhone LiDAR)
+
+[Stray Scanner](https://apps.apple.com/us/app/stray-scanner/id1557051662) is a free iOS app that records RGB-D data using the LiDAR sensor on iPhone Pro / iPad Pro devices. It captures RGB video and per-frame low-res depth maps.
+
+**Example recording** (`4e41d0a7da`, downloaded from VSLAM-Lab's HuggingFace and unzipped under `datasets/stray_raw/`):
+
+```bash
+bash scripts/download_stray.sh
+```
+
+**Your own captures:** export your own recording (unzipped zip files) into `datasets/stray_raw/<scene_id>/`, then:
+
+```bash
+python scripts/stray_ingest.py <scene_id>
+```
+
+This preprocesses the recording for RGB-D SLAM (default 640×480) and writes `configs/stray/<scene_id>.yaml`.
+
 
 ## Usage
 
@@ -144,9 +162,23 @@ python slam.py --config configs/tum/fr3_office.yaml -w
 # ScanNet
 python slam.py --config configs/scannet/scene0000.yaml -w
 
+# Stray Scanner (iPhone LiDAR)
+python slam.py --config configs/stray/4e41d0a7da.yaml -w
+
 # Replica, but only processing the first 200 frames
 python slam.py --config configs/replica/office0.yaml -w --range 0 200 1
 ```
+
+### Live demo with Intel RealSense
+
+Connect an Intel RealSense D435i/D455 camera via USB-3, install `pyrealsense2`, and run:
+
+```bash
+pip install pyrealsense2
+python slam.py --config configs/live/realsense.yaml
+```
+
+The GUI opens automatically. Move the camera slowly at first to let the system initialize.
 
 ### Running on all scenes without GUI
 

@@ -77,7 +77,8 @@
     <div id="hud">
       <!-- <div>Polling <code>live.ply</code> + <code>traj_live.json</code>.</div>
       <div>Open this page via your PC’s LAN URL (see SLAM terminal) for phones/tablets.</div> -->
-      <div>Use drag / wheel / WASD to pan, arrow keys to rotate.</div>
+      <div>Fly mode: WASD move, Q / Shift down, E up, wheel dolly, drag or arrow keys to look.</div>
+      <div id="frameInfo"></div>
       <div id="status">Waiting for first chunk…</div>
       <div id="err"></div>
     </div>
@@ -97,6 +98,7 @@
 
       const hudStatus = document.getElementById("status");
       const hudErr = document.getElementById("err");
+      const hudFrame = document.getElementById("frameInfo");
 
       const params = new URLSearchParams(location.search);
       const paramInterval = params.get("interval");
@@ -129,31 +131,39 @@
       const sceneRoot = new THREE.Group();
       scene.add(sceneRoot);
       const alignQuat = new THREE.Quaternion();
+      const clock = new THREE.Clock();
 
+      /** First-person fly camera (Open3D-style): eye position + yaw/pitch (YXZ). */
       const controls = {
         keys: {},
         mouseDragging: false,
         lastX: 0,
         lastY: 0,
+        eye: new THREE.Vector3(0, 0, 0),
         yaw: 0,
         pitch: -0.15,
-        dist: 2.5,
-        target: new THREE.Vector3(1, 0, 0),
       };
 
-      function sphericalToOffset() {
-        const cp = Math.cos(controls.pitch);
-        const x = controls.dist * cp * Math.sin(controls.yaw);
-        const y = controls.dist * Math.sin(controls.pitch);
-        const z = controls.dist * cp * Math.cos(controls.yaw);
-        return new THREE.Vector3(x, y, z);
+      const _eulerYXZ = new THREE.Euler(0, 0, 0, "YXZ");
+      const _v1 = new THREE.Vector3();
+      const _v2 = new THREE.Vector3();
+
+      function getViewForward(out) {
+        _eulerYXZ.set(controls.pitch, controls.yaw, 0, "YXZ");
+        return out.set(0, 0, -1).applyEuler(_eulerYXZ);
+      }
+      /** Camera local +X in world space (must match YXZ euler — not forward×up, which skews when pitched). */
+      function getViewRight(out) {
+        _eulerYXZ.set(controls.pitch, controls.yaw, 0, "YXZ");
+        return out.set(1, 0, 0).applyEuler(_eulerYXZ);
       }
 
       function syncCamera() {
         camera.up.set(0, 1, 0);
-        const off = sphericalToOffset();
-        camera.position.copy(controls.target).add(off);
-        camera.lookAt(controls.target);
+        camera.position.copy(controls.eye);
+        camera.rotation.order = "YXZ";
+        camera.rotation.y = controls.yaw;
+        camera.rotation.x = controls.pitch;
       }
       syncCamera();
 
@@ -184,8 +194,9 @@
       });
       renderer.domElement.addEventListener("wheel", (e) => {
         e.preventDefault();
-        controls.dist *= 1 + Math.sign(e.deltaY) * 0.12;
-        controls.dist = Math.max(0.05, Math.min(800, controls.dist));
+        const fwd = getViewForward(_v2);
+        const wheelStep = 0.22 * (1 + Math.abs(e.deltaY) / 100);
+        controls.eye.addScaledVector(fwd, -Math.sign(e.deltaY) * wheelStep);
         syncCamera();
       });
 
@@ -205,6 +216,7 @@
       let currentMesh = null;
       let reloadPending = false;
       let trajGroup = null;
+      let overlayGroup = null;
       let kfGroup = null;
       let cameraInitialised = false;
       let showTraj = true;
@@ -280,14 +292,15 @@
         aligned.decompose(pos, quat, new THREE.Vector3());
 
         const lookDir = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
-        controls.target.copy(pos).addScaledVector(lookDir, 0.5);
+        const lookTarget = pos.clone().addScaledVector(lookDir, 0.5);
         const behindPos = pos.clone().addScaledVector(lookDir, -followBehindDist);
-        const ox = behindPos.x - controls.target.x;
-        const oy = behindPos.y - controls.target.y;
-        const oz = behindPos.z - controls.target.z;
-        controls.dist = Math.sqrt(ox * ox + oy * oy + oz * oz);
-        controls.pitch = Math.asin(Math.max(-1, Math.min(1, oy / controls.dist)));
-        controls.yaw = Math.atan2(ox, oz);
+        controls.eye.copy(behindPos);
+        const tmpCam = new THREE.PerspectiveCamera();
+        tmpCam.position.copy(controls.eye);
+        tmpCam.up.set(0, 1, 0);
+        tmpCam.lookAt(lookTarget);
+        controls.yaw = tmpCam.rotation.y;
+        controls.pitch = tmpCam.rotation.x;
         syncCamera();
       }
 
@@ -318,6 +331,8 @@
         liveOverlayLineMaterials = [];
         disposeGroup(trajGroup);
         trajGroup = null;
+        disposeGroup(overlayGroup);
+        overlayGroup = null;
         disposeGroup(kfGroup);
         kfGroup = null;
       }
@@ -334,6 +349,7 @@
           const pos = data.positions;
           clearTraj();
           trajGroup = new THREE.Group();
+          overlayGroup = new THREE.Group();
           const rw = window.innerWidth;
           const rh = window.innerHeight;
 
@@ -395,13 +411,16 @@
                 segMat.resolution.set(rw, rh);
                 liveOverlayLineMaterials.push(segMat);
                 const seg2 = new LineSegments2(segGeom, segMat);
-                trajGroup.add(seg2);
+                overlayGroup.add(seg2);
               }
             }
           }
 
           if (data.current_view && data.current_view.c2w_rows) {
             latestC2W = data.current_view.c2w_rows;
+            if (data.current_view.frame_id != null) {
+              hudFrame.textContent = "Frame: " + data.current_view.frame_id;
+            }
             if (followCamera) snapToView(latestC2W);
             const fVerts = buildFrustumSegments(data.current_view.c2w_rows);
             const fGeom = new LineSegmentsGeometry();
@@ -414,7 +433,7 @@
             fMat.resolution.set(rw, rh);
             liveOverlayLineMaterials.push(fMat);
             const fLine = new LineSegments2(fGeom, fMat);
-            trajGroup.add(fLine);
+            overlayGroup.add(fLine);
           }
 
           const kfViews = data.keyframe_views;
@@ -453,6 +472,12 @@
             sceneRoot.add(trajGroup);
           } else {
             trajGroup = null;
+          }
+
+          if (overlayGroup.children.length > 0) {
+            sceneRoot.add(overlayGroup);
+          } else {
+            overlayGroup = null;
           }
         } catch (_) {
           /* optional until first export */
@@ -522,30 +547,35 @@
       }
 
       renderer.setAnimationLoop(() => {
-        const step = 0.04;
-        const rotStep = 0.025;
+        const delta = Math.min(clock.getDelta(), 0.1);
+        const moveSpeed = 2.2;
+        const lookSpeed = 2.25;
+        const step = moveSpeed * delta;
+        const rotStep = lookSpeed * delta;
+
         if (controls.keys["KeyW"]) {
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          controls.target.addScaledVector(dir, step);
+          getViewForward(_v1);
+          controls.eye.addScaledVector(_v1, step);
         }
         if (controls.keys["KeyS"]) {
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          controls.target.addScaledVector(dir, -step);
+          getViewForward(_v1);
+          controls.eye.addScaledVector(_v1, -step);
         }
         if (controls.keys["KeyD"]) {
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          dir.cross(camera.up).normalize();
-          controls.target.addScaledVector(dir, step);
+          getViewRight(_v1);
+          controls.eye.addScaledVector(_v1, step);
         }
         if (controls.keys["KeyA"]) {
-          const dir = new THREE.Vector3();
-          camera.getWorldDirection(dir);
-          dir.cross(camera.up).normalize();
-          controls.target.addScaledVector(dir, -step);
+          getViewRight(_v1);
+          controls.eye.addScaledVector(_v1, -step);
         }
+        if (controls.keys["KeyE"]) {
+          controls.eye.y += step;
+        }
+        if (controls.keys["KeyQ"] || controls.keys["ShiftLeft"] || controls.keys["ShiftRight"]) {
+          controls.eye.y -= step;
+        }
+
         if (controls.keys["ArrowLeft"]) controls.yaw += rotStep;
         if (controls.keys["ArrowRight"]) controls.yaw -= rotStep;
         if (controls.keys["ArrowUp"]) {

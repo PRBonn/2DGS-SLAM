@@ -183,7 +183,8 @@ class Camera(nn.Module):
                         self.cam_rot_delta], axis=0)
         new_w2c = SE3_exp(tau) @ self.T
         converged = (tau**2).sum() < (converged_threshold**2)
-        self.T = new_w2c
+        # Leaf tensor for deepcopy / multiprocess pickling (avoid autograd non-leaf from @ chain).
+        self.T = new_w2c.detach().clone()
         self.cam_rot_delta.data.fill_(0)
         self.cam_trans_delta.data.fill_(0)
 

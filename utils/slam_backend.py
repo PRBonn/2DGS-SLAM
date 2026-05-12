@@ -52,6 +52,9 @@ class BackEnd(mp.Process):
         self.active_cam_id_list = []
         self.inactive_cam_id_list = []
         self.cam_id_list = []
+        self.pgo_with_all_frames = config["Training"].get("pgo_with_all_frames", True)
+        self.all_cam_ids = []
+        self.all_cameras = {}
 
         self.voxel_size = config["Training"]["voxel_size"]
         self.voxels = VoxelHash()
@@ -100,6 +103,7 @@ class BackEnd(mp.Process):
         self.count_from_last_loop = 1000000
 
         rs = self.config.get("Results", {})
+        self.verbose = bool(rs.get("verbose", False))
         self.map_refine_iterations = max(0, int(rs.get("map_refine_iterations", 26000)))
         self._spark_live_interval = float(rs.get("spark_live_interval_sec", 5.0))
 
@@ -131,7 +135,7 @@ class BackEnd(mp.Process):
         ssim_error = fused_ssim(rendered_img.unsqueeze(0), train_img.unsqueeze(0))[0].mean(0)
         img_error = (1.0 - self.lambda_dssim)*img_L1_error + self.lambda_dssim*(1.0 - ssim_error)
 
-        depth_normal = depth2normal(rendered_depth, camera.fx, camera.fy, camera.cx, camera.fy) # (h, w, 3)
+        depth_normal = depth2normal(rendered_depth, camera.fx, camera.fy, camera.cx, camera.cy) # (h, w, 3)
         depth_normal = rearrange(depth_normal, 'h w c -> c h w')
         depth_normal = depth_normal*render_alpha.detach()
 
@@ -142,6 +146,11 @@ class BackEnd(mp.Process):
             train_depth = camera.scale*train_depth + camera.shift
             depth_difference = rendered_depth - train_depth
             depth_error = self.lambda_depth*torch.abs(depth_difference).mean(0)
+            dm = frame.depth_mapping_mask
+            if dm is not None:
+                depth_error = depth_error * dm.squeeze(0).to(
+                    device=depth_error.device, dtype=depth_error.dtype
+                )
         else :
             depth_error = 0.0
 
@@ -405,14 +414,20 @@ class BackEnd(mp.Process):
         node_pose_np = node_cam.T.inverse().cpu().numpy()
         self.pgo.add_frame_node(frame_id=node_cam.uid, init_pose=node_pose_np)
 
-        last_key_pose = self.key_cameras[self.last_node_id].T.inverse().cpu().numpy()
-        odom_transform = np.linalg.inv(last_key_pose) @ node_pose_np
+        last_pose = self.all_cameras[self.last_node_id].T.inverse().cpu().numpy()
+        odom_transform = np.linalg.inv(last_pose) @ node_pose_np
 
-        self.pgo.add_odometry_factor(cur_id=node_cam.uid, last_id=self.last_node_id, 
+        self.pgo.add_odometry_factor(cur_id=node_cam.uid, last_id=self.last_node_id,
                                      odom_transform=odom_transform)
-        
+
         self.last_node_id = node_cam.uid
 
+
+    def add_tracked_frames_to_graph(self, tracked_cams):
+        for cam in tracked_cams:
+            self.all_cameras[cam.uid] = cam
+            self.all_cam_ids.append(cam.uid)
+            self.add_odom_node_to_graph(cam)
 
     def push_to_frontend(self, tag=None):
         cameras = []
@@ -427,8 +442,12 @@ class BackEnd(mp.Process):
 
     def push_to_frontend_after_pgo(self):
         cameras = []
-        for cam_id in self.cam_id_list: 
-            cameras.append(clone_obj(self.key_cameras[cam_id]))
+        if self.pgo_with_all_frames:
+            for cam_id in self.all_cam_ids:
+                cameras.append(clone_obj(self.all_cameras[cam_id]))
+        else:
+            for cam_id in self.cam_id_list:
+                cameras.append(clone_obj(self.key_cameras[cam_id]))
 
         gaussian_copy = clone_obj(self.gaussians)
         msg = ["pgo", gaussian_copy, cameras, list(self.accepted_loop_pairs)]
@@ -544,6 +563,12 @@ class BackEnd(mp.Process):
                 if self.iteration_count % 60 == 0:
                     self.densify()
                     self.iteration_count = 0
+                    if self.verbose:
+                        Log(
+                            f"map densify G={int(self.gaussians.get_xyz.shape[0])} "
+                            f"actKFs={len(self.active_cam_id_list)}",
+                            tag="Map",
+                        )
                     continue
 
                 if self.iteration_count % 15 == 0:
@@ -570,11 +595,19 @@ class BackEnd(mp.Process):
                     self.key_cameras[init_camera.uid] = init_camera
                     self.cam_sliding_window.append(init_camera.uid)
                     self.cam_id_list.append(init_camera.uid)
+                    self.all_cameras[init_camera.uid] = init_camera
+                    self.all_cam_ids.append(init_camera.uid)
 
                     Log("init the system")
                     self.reset()
                     self.viewpoints[init_camera.uid] = init_camera
                     self.update_map(init_camera, init_frame, self.init_iter_num)
+                    if self.verbose:
+                        Log(
+                            f"map init uid={init_camera.uid} iters={self.init_iter_num} "
+                            f"G={int(self.gaussians.get_xyz.shape[0])}",
+                            tag="Map",
+                        )
                     init_pose_np = init_camera.T.inverse().cpu().numpy()
                     self.pgo.add_frame_node(frame_id=init_camera.uid, init_pose=init_pose_np)
                     self.pgo.add_pose_prior(frame_id=init_camera.uid, prior_pose=init_pose_np, fixed=True)
@@ -585,10 +618,17 @@ class BackEnd(mp.Process):
 
                 elif data[0] == "keyframe":
                     key_camera, key_frame, window = data[1], data[2], data[3]
+                    tracked_cams = data[4] if len(data) > 4 else []
+
+                    if self.pgo_with_all_frames:
+                        self.add_tracked_frames_to_graph(tracked_cams)
+
                     self.key_frames[key_frame.camera_id] = key_frame
                     self.key_cameras[key_camera.uid] = key_camera
-                    
+
                     self.cam_id_list.append(key_camera.uid)
+                    self.all_cameras[key_camera.uid] = key_camera
+                    self.all_cam_ids.append(key_camera.uid)
                     self.cam_sliding_window.append(key_camera.uid)
 
                     self.add_odom_node_to_graph(key_camera)
@@ -604,28 +644,40 @@ class BackEnd(mp.Process):
                     self.active_cam_id_list = list(active_set)
                     self.inactive_cam_id_list = [cam for cam in self.cam_id_list if cam not in active_set]
 
+                    if self.verbose:
+                        Log(
+                            f"map kf uid={key_camera.uid} iters={self.key_frame_iter_num} "
+                            f"G={int(self.gaussians.get_xyz.shape[0])} "
+                            f"actKFs={len(self.active_cam_id_list)} inactKFs={len(self.inactive_cam_id_list)}",
+                            tag="Map",
+                        )
                     self.push_to_frontend(tag='keyframe')
 
                 elif data[0] == "pgo":
                     cur_camera, cur_frame, loop_camera = data[1], data[2], data[3]
+                    tracked_cams = data[4] if len(data) > 4 else []
 
-                    # put current frame into keyframe dict
+                    if self.pgo_with_all_frames:
+                        self.add_tracked_frames_to_graph(tracked_cams)
+
                     self.key_frames[cur_frame.camera_id] = cur_frame
                     self.key_cameras[cur_camera.uid] = cur_camera
 
                     self.cam_id_list.append(cur_camera.uid)
+                    self.all_cameras[cur_camera.uid] = cur_camera
+                    self.all_cam_ids.append(cur_camera.uid)
                     self.cam_sliding_window.append(cur_camera.uid)
 
                     self.add_odom_node_to_graph(cur_camera)
 
                     cur_pose = cur_camera.T.inverse().cpu().numpy()
                     loop_pose = loop_camera.T.inverse().cpu().numpy()
-                                   
+
                     loop_transform = np.linalg.inv(loop_pose) @ cur_pose
                     loop_success = self.pgo.add_loop_factor(cur_id = cur_camera.uid,
                                              loop_id = loop_camera.uid,
                                              loop_transform= loop_transform)
-                    
+
                     if loop_success is True:
                         if self.pgo.optimize_pose_graph() is True:
                             pair = (
@@ -636,16 +688,24 @@ class BackEnd(mp.Process):
                                 self.accepted_loop_pairs.append(pair)
                             N = self.gaussians.get_xyz.shape[0]
                             N_pose_updates = torch.eye(4, device=self.device, dtype=self.dtype).unsqueeze(0).repeat(N, 1, 1)
-                            for kf_id in self.cam_id_list:
-                                optimized_pose = torch.from_numpy(self.pgo.get_optimized_node_pose(kf_id)).to(self.device).to(self.dtype).inverse()
-                                pose_update = optimized_pose.inverse() @ self.key_cameras[kf_id].T
-                                mask = (self.gaussians.get_ids == kf_id).squeeze(1)
-                                N_pose_updates[mask] = pose_update.unsqueeze(0).repeat(mask.sum(), 1, 1)
-                                self.key_cameras[kf_id].T = optimized_pose
+                            for frame_id in self.all_cam_ids:
+                                optimized_pose = torch.from_numpy(self.pgo.get_optimized_node_pose(frame_id)).to(self.device).to(self.dtype).inverse()
+                                if frame_id in self.key_cameras:
+                                    pose_update = optimized_pose.inverse() @ self.key_cameras[frame_id].T
+                                    mask = (self.gaussians.get_ids == frame_id).squeeze(1)
+                                    N_pose_updates[mask] = pose_update.unsqueeze(0).repeat(mask.sum(), 1, 1)
+                                    self.key_cameras[frame_id].T = optimized_pose
+                                self.all_cameras[frame_id].T = optimized_pose
                             self.gaussians.update_after_pgo(N_pose_updates)
-                        
+
                         self.update_state(cur_camera, loop_cam=loop_camera)
 
+                    if self.verbose:
+                        Log(
+                            f"map pgo cur={cur_camera.uid} loop={loop_camera.uid} "
+                            f"n_loops={len(self.accepted_loop_pairs)} G={int(self.gaussians.get_xyz.shape[0])}",
+                            tag="Map",
+                        )
                     self.push_to_frontend_after_pgo()
                 
                 else:

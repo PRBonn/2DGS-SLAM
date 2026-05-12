@@ -43,6 +43,8 @@ class Frame:
     rgb: Optional[torch.Tensor] = None
     depth: Optional[torch.Tensor] = None
     mapping_mask: Optional[torch.Tensor] = None
+    # If set, depth loss uses this mask (e.g. valid-depth ∧ rgb); RGB/normal use mapping_mask alone.
+    depth_mapping_mask: Optional[torch.Tensor] = None
 
 
 class FrontEnd(mp.Process):
@@ -77,6 +79,7 @@ class FrontEnd(mp.Process):
         self.loop_frame_ids = []
 
         self.loop_uid_pairs = []
+        self.tracked_since_last_kf = []
 
         self.device = "cuda:0"
         self.dtype = torch.float32
@@ -102,44 +105,54 @@ class FrontEnd(mp.Process):
         self.save_trj_kf_intv = rs["save_trj_kf_intv"]
         self.map_refine = rs["map_refine"]
 
-        self.tracking_itr_num = self.config["Training"]["tracking_itr_num"]
+        tr = self.config["Training"]
+        self.tracking_itr_num = tr["tracking_itr_num"]
+        self.reloc_tracking_itr_num = tr.get("reloc_tracking_itr_num", self.tracking_itr_num)
 
-        self.min_depth = self.config["Training"]["depth_min_threshold"]
-        self.max_depth = self.config["Training"]["depth_max_threshold"]
+        self.min_depth = tr["depth_min_threshold"]
+        self.max_depth = tr["depth_max_threshold"]
         
-        depth_type = self.config["Training"]["depth_type"]
+        depth_type = tr["depth_type"]
         if depth_type == 'expected':
             self.depth_type = 'rend_depth_expected'
         else:
             self.depth_type = 'rend_depth_median'
 
         # for gradient mask 
-        self.edge_threshold = self.config["Training"]["edge_threshold"]
-        self.rgb_boundary_threshold = self.config["Training"]["rgb_boundary_threshold"]
+        self.edge_threshold = tr["edge_threshold"]
+        self.rgb_boundary_threshold = tr["rgb_boundary_threshold"]
 
-        self.loop_candidate_score = self.config["Training"]["loop_candidate_score"]
-        self.old_than_N_keyframe = self.config["Training"]["old_than_N_keyframe"]
+        self.loop_candidate_score = tr["loop_candidate_score"]
+        self.old_than_N_keyframe = tr["old_than_N_keyframe"]
 
-        self.kf_overlap = self.config["Training"]["kf_overlap"]
-        self.kf_max_translation = self.config["Training"]["kf_max_translation"]
-        self.kf_min_overlap = self.config["Training"]["kf_min_overlap"]
+        self.kf_overlap = tr["kf_overlap"]
+        self.kf_max_translation = tr["kf_max_translation"]
+        self.kf_min_overlap = tr["kf_min_overlap"]
 
-        self.traking_lambda_depth = self.config["Training"]["traking_lambda_depth"]
-        self.traking_lambad_grad = self.config["Training"]["traking_lambad_grad"]
+        self.tracking_lambda_depth = tr.get("tracking_lambda_depth", tr.get("traking_lambda_depth"))
+        self.tracking_lambda_grad = tr.get("tracking_lambda_grad", tr.get("traking_lambad_grad"))
+        if self.tracking_lambda_depth is None:
+            raise KeyError("Training.tracking_lambda_depth (or legacy traking_lambda_depth)")
+        if self.tracking_lambda_grad is None:
+            raise KeyError("Training.tracking_lambda_grad (or legacy traking_lambad_grad)")
 
-        self.rot_lr = self.config["Training"]["lr"]["cam_rot_delta"]
-        self.trans_lr = self.config["Training"]["lr"]["cam_trans_delta"]
+        self.rot_lr = tr["lr"]["cam_rot_delta"]
+        self.trans_lr = tr["lr"]["cam_trans_delta"]
 
         # larger than the threshold means this gaussian can be observed.
         self.active_threshold = 0.5
         self.conf_threshold = 1.5
 
-        self.loop_overlap_ratio = self.config["Training"]["loop_overlap_ratio"]
-        self.depth_error_threshold = self.config["Training"]["depth_error_threshold"]
-        self.reloc_method = self.config["Training"].get("reloc_method", "mast3r")
-        self.enable_revisit_loop = self.config["Training"].get("enable_revisit_loop", True)
-        self.enable_scale_optimization = self.config["Training"].get("enable_scale_optimization", True)
-        self.enable_mast3r_reloc = self.config["Training"].get("enable_mast3r_reloc", True)
+        self.loop_overlap_ratio = tr["loop_overlap_ratio"]
+        self.depth_error_threshold = tr["depth_error_threshold"]
+        self.reloc_method = tr.get("reloc_method", "mast3r")
+        self.enable_revisit_loop = tr.get("enable_revisit_loop", True)
+        self.enable_scale_optimization = tr.get("enable_scale_optimization", True)
+        self.enable_mast3r_reloc = tr.get("enable_mast3r_reloc", True)
+        self.pgo_with_all_frames = tr.get("pgo_with_all_frames", True)
+        self.use_odom_init_guess = tr.get("use_odom_init_guess", False)
+        self.loop_closure_check_every = max(1, int(tr.get("loop_closure_check_every", 1)))
+        self.enable_loop_closure = tr.get("enable_loop_closure", True)
 
         self.resized_w, self.resized_h = self.dust3r.input_img_size
         self.resized_K = self.dust3r.resized_K
@@ -172,11 +185,28 @@ class FrontEnd(mp.Process):
         self.backend_queue.put(msg)
 
     def request_key_frame(self, camera, frame, loop_frames):
-        msg = ['keyframe', camera, frame, loop_frames]
+        if self.verbose:
+            Log(
+                f"kf→map uid={camera.uid} n_kf_front={len(self.key_frame_ids)} loop_win={len(loop_frames)}",
+                tag="Track",
+            )
+        if self.pgo_with_all_frames:
+            tracked_cams = [clone_obj(c) for c in self.tracked_since_last_kf]
+            self.tracked_since_last_kf = []
+        else:
+            tracked_cams = []
+        msg = ['keyframe', camera, frame, loop_frames, tracked_cams]
         self.backend_queue.put(msg)
 
     def request_pgo(self, cur_camera, cur_frame, loop_camera):
-        msg = ['pgo', clone_obj(cur_camera), clone_obj(cur_frame), clone_obj(loop_camera)]
+        if self.verbose:
+            Log(f"pgo→map cur={cur_camera.uid} loop={loop_camera.uid}", tag="Track")
+        if self.pgo_with_all_frames:
+            tracked_cams = [clone_obj(c) for c in self.tracked_since_last_kf]
+            self.tracked_since_last_kf = []
+        else:
+            tracked_cams = []
+        msg = ['pgo', clone_obj(cur_camera), clone_obj(cur_frame), clone_obj(loop_camera), tracked_cams]
         self.backend_queue.put(msg)
 
     def sync_backend(self, data):
@@ -373,12 +403,23 @@ class FrontEnd(mp.Process):
         first_original_img, first_pil_img, first_depth, first_gt_pose = self.dataset[first_id]
         
         cam_start = Camera(first_id, first_gt_pose, first_gt_pose, self.dataset.K, self.dataset.height, self.dataset.width)
-        _, mapping_mask = self.compute_grad_mask(first_original_img)
+        _, rgb_pixel_mask = self.compute_grad_mask(first_original_img)
+        depth_mask = torch.logical_and(
+            first_depth > self.min_depth, first_depth < self.max_depth
+        )
+        depth_mapping_mask = torch.logical_and(depth_mask, rgb_pixel_mask)
 
-        start_frame = Frame(camera_id=first_id, rgb=first_original_img, depth=first_depth, mapping_mask=mapping_mask)
+        start_frame = Frame(
+            camera_id=first_id,
+            rgb=first_original_img,
+            depth=first_depth,
+            mapping_mask=rgb_pixel_mask,
+            depth_mapping_mask=depth_mapping_mask,
+        )
 
-        resized_first_img = self.dust3r.preprocess(first_pil_img)
-        self.dust3r.add_img_to_retriever(resized_first_img, first_id)
+        resized_first_img = self.dust3r.preprocess(first_pil_img) if self.enable_loop_closure else None
+        if self.enable_loop_closure:
+            self.dust3r.add_img_to_retriever(resized_first_img, first_id)
         
         self.cameras[first_id] = cam_start
         self.key_frames[first_id] = start_frame
@@ -388,9 +429,11 @@ class FrontEnd(mp.Process):
         self.requested_init = True
 
         self.initialized = True
+        if self.verbose:
+            Log(f"init first_kf={first_id}", tag="Track")
     
 
-    def tracking(self, camera, gt_img, depth, grad_mask,  tracking_mask=None, render_option='active'):
+    def tracking(self, camera, gt_img, depth, grad_mask, tracking_mask=None, render_option='active', itr_num=None):
         opt_params = []
         opt_params.append({"params": [camera.cam_rot_delta], "lr": self.rot_lr})
         opt_params.append({"params": [camera.cam_trans_delta], "lr": self.trans_lr})
@@ -412,7 +455,9 @@ class FrontEnd(mp.Process):
         g_shs = self.gaussians.get_features[stat_mask]
         ray_vectors = camera.camera_ray_vectors()
 
-        for i in range(self.tracking_itr_num):
+        n_iter = self.tracking_itr_num if itr_num is None else int(itr_num)
+        iters_done = 0
+        for i in range(n_iter):
             render_pkg = render_for_tracking(camera, g_xyz, g_opacity, g_scales, g_rotations, g_shs,
                                              self.gaussians.active_sh_degree, bg_color=self.bg_color)
             rendered_image = render_pkg["render"]
@@ -432,7 +477,7 @@ class FrontEnd(mp.Process):
 
             color_error = torch.abs(gt_img - image_ab).mean(0)
             color_error[~(valid_mask.squeeze(0))] = 0.0
-            color_error[grad_mask.squeeze(0)] *= self.traking_lambad_grad
+            color_error[grad_mask.squeeze(0)] *= self.tracking_lambda_grad
             color_loss = color_error.mean()
 
             valid_depth_mask = torch.logical_and(depth_mask, valid_mask)
@@ -440,7 +485,7 @@ class FrontEnd(mp.Process):
             depth_error[~valid_depth_mask] = 0.0
             depth_loss = depth_error.mean()
 
-            loss = color_loss + self.traking_lambda_depth*depth_loss
+            loss = color_loss + self.tracking_lambda_depth * depth_loss
 
             loss.backward()
             
@@ -448,9 +493,14 @@ class FrontEnd(mp.Process):
             pose_optimizer.zero_grad()
             with torch.no_grad():
                 converged = camera.update_pose()
+                iters_done = i + 1
                 if converged:
                     break
         
+        if self.verbose:
+            early = f" early" if 0 < iters_done < n_iter else ""
+            Log(f"track frame={camera.uid} iters={iters_done}/{n_iter}{early}", tag="Track")
+
         render_pkg = render(camera, pc = self.gaussians, render_option=render_option, bg_color=self.bg_color)
         rendered_opacity = render_pkg["rend_alpha"]
         rendered_normal = render_pkg["rend_normal"]
@@ -469,6 +519,7 @@ class FrontEnd(mp.Process):
         depth_error[~valid_depth_mask] = 0
         depth_avg_error = (depth_error.sum() / valid_depth_mask.sum()).detach()
 
+        camera.T = camera.T.detach().clone()
         return render_pkg, depth_avg_error
     
         
@@ -487,19 +538,46 @@ class FrontEnd(mp.Process):
     def detect_loop_by_featquery(self, query_image, query_camera):
         # detect loop based on image feature
         id_and_scores = self.dust3r.query_from_retriever(query_image, query_camera.uid)
-        if id_and_scores is not None:
-            ids = id_and_scores[0]
-            scores = id_and_scores[1]
-            last_n_id = self.key_frame_ids[-self.old_than_N_keyframe:][0]
-                
-            for idx in range(len(ids)):
-                k_id = ids[idx]
-                k_score = scores[idx]
-                if (k_id < last_n_id) and (k_score > self.loop_candidate_score):
-                    return k_id
-                if k_score < self.loop_candidate_score:
-                    break
+        if id_and_scores is None:
+            if self.verbose:
+                Log(
+                    "featquery: skipped (retriever empty or query_from_retriever returned None)",
+                    tag="Loop",
+                )
+            return -1
 
+        ids = id_and_scores[0]
+        scores = id_and_scores[1]
+        last_n_id = self.key_frame_ids[-self.old_than_N_keyframe :][0]
+        thr = self.loop_candidate_score
+        eligible = [
+            (int(ids[i]), float(scores[i]))
+            for i in range(len(ids))
+            if int(ids[i]) < last_n_id
+        ]
+        if not eligible:
+            if self.verbose:
+                Log(f"featquery none eligible (k_id>={last_n_id})", tag="Loop")
+            return -1
+
+        notable = len(ids) > 0 and float(scores[0]) > 0.5 * thr
+        if self.verbose and notable:
+            topn = min(5, len(eligible))
+            parts = [f"#{j} kf={eligible[j][0]} {eligible[j][1]:.4f}" for j in range(topn)]
+            Log(f"featquery eligible top-{topn} (need score>{thr}): ", ", ".join(parts), tag="Loop")
+
+        for j, (k_id, k_sc) in enumerate(eligible):
+            if k_sc > thr:
+                if self.verbose:
+                    Log(f"featquery PASS kf={k_id} score={k_sc:.4f}", tag="Loop")
+                return k_id
+            if k_sc < thr:
+                if self.verbose and notable:
+                    Log(f"featquery stop #{j} kf={k_id} {k_sc:.4f}<{thr}", tag="Loop")
+                break
+
+        if self.verbose and notable:
+            Log("featquery FAIL no candidate", tag="Loop")
         return -1
     
 
@@ -522,6 +600,7 @@ class FrontEnd(mp.Process):
         valid_mask = torch.logical_and(opacity_mask, depth_mask)
         valid_mask = torch.logical_and(normal_mask, valid_mask)
         observed_ratio = valid_mask.sum()/(valid_mask.shape[1] * valid_mask.shape[2])
+        observed_ratio_f = observed_ratio.item()
 
         if observed_ratio > self.loop_overlap_ratio:
             # find the frame who observe most inactive gaussians in current view
@@ -533,43 +612,104 @@ class FrontEnd(mp.Process):
             contribution_sums.scatter_add_(0, inverse_indices, contributions)
             max_index = torch.argmax(contribution_sums)
             loop_id = unique_ids[max_index].item()
+            if self.verbose:
+                Log(
+                    f"revisit: PASS geometric gate — observed_ratio={observed_ratio_f:.4f} "
+                    f"(>{self.loop_overlap_ratio}) → candidate kf={loop_id}",
+                    tag="Loop",
+                )
             return loop_id
-        
+
+        if self.verbose and observed_ratio_f > self.loop_overlap_ratio * 0.85:
+            Log(
+                f"revisit: FAIL geometric gate (near miss) — observed_ratio={observed_ratio_f:.4f} "
+                f"(need >{self.loop_overlap_ratio})",
+                tag="Loop",
+            )
         return -1
 
     def is_this_loop_necessary(self, new_loop_id):
         if (len(self.key_frame_ids) - self.last_loop_at_len_kf) >= self.old_than_N_keyframe:
-            return True
-        else:
-            new_loop_idx = self.key_frame_ids.index(new_loop_id)
-            last_loop_idx = self.key_frame_ids.index(self.last_loop_id)
-            if (last_loop_idx - new_loop_idx) >= self.old_than_N_keyframe:
-                return True
-        
-        return False
+            return True, (
+                f"allowed: {len(self.key_frame_ids) - self.last_loop_at_len_kf} keyframes "
+                f"since last loop (>= {self.old_than_N_keyframe})"
+            )
+        new_loop_idx = self.key_frame_ids.index(new_loop_id)
+        last_loop_idx = self.key_frame_ids.index(self.last_loop_id)
+        idx_gap = last_loop_idx - new_loop_idx
+        if idx_gap >= self.old_than_N_keyframe:
+            return True, (
+                f"allowed: candidate kf idx {new_loop_idx} vs last-loop kf idx {last_loop_idx} "
+                f"(gap {idx_gap} >= {self.old_than_N_keyframe})"
+            )
+        return False, (
+            f"throttled: kfs_since_last_loop={len(self.key_frame_ids) - self.last_loop_at_len_kf} "
+            f"(need >= {self.old_than_N_keyframe}), candidate_idx={new_loop_idx}, "
+            f"last_loop_idx={last_loop_idx}, idx_gap={idx_gap} (need >= {self.old_than_N_keyframe})"
+        )
 
     def try_loop_closure(self, query_resized_img, query_depth, query_camera):
+        if not self.enable_loop_closure:
+            return None
         if self.enable_revisit_loop:
             loop_id = self.detect_loop_by_revisit(query_depth, query_camera)
-            if loop_id > 0 and self.is_this_loop_necessary(loop_id):
+            if loop_id > 0:
+                ok, why = self.is_this_loop_necessary(loop_id)
                 if self.verbose:
-                    Log(f"revisit loop: {loop_id}", tag="Loop")
+                    Log(
+                        f"revisit: candidate kf={loop_id} throttle {'PASS' if ok else 'FAIL'} — {why}",
+                        tag="Loop",
+                    )
+                if ok:
+                    if self.reloc_method == 'mast3r':
+                        loop_cam = self.reloc_with_mast3r(
+                            query_camera, query_resized_img, loop_id, loop_type='revisit'
+                        )
+                    else:
+                        loop_cam = self.reloc_with_icp(query_camera, loop_id, self.reloc_method)
+                    if loop_cam is not None:
+                        if self.verbose:
+                            Log(
+                                f"revisit: ACCEPT loop — relocalized kf={loop_cam.uid} ({self.reloc_method})",
+                                tag="Loop",
+                            )
+                        return loop_cam
+                    if self.verbose:
+                        Log(
+                            f"revisit: REJECT — relocalization failed for kf={loop_id} ({self.reloc_method})",
+                            tag="Loop",
+                        )
+        elif self.verbose:
+            Log("revisit: disabled (enable_revisit_loop=False), skipping", tag="Loop")
+
+        loop_id = self.detect_loop_by_featquery(query_resized_img, query_camera)
+        if loop_id > 0:
+            ok, why = self.is_this_loop_necessary(loop_id)
+            if self.verbose:
+                Log(
+                    f"featquery: candidate kf={loop_id} throttle {'PASS' if ok else 'FAIL'} — {why}",
+                    tag="Loop",
+                )
+            if ok:
                 if self.reloc_method == 'mast3r':
-                    loop_cam = self.reloc_with_mast3r(query_camera, query_resized_img, loop_id, loop_type='revisit')
+                    loop_cam = self.reloc_with_mast3r(
+                        query_camera, query_resized_img, loop_id, loop_type='featquery'
+                    )
                 else:
                     loop_cam = self.reloc_with_icp(query_camera, loop_id, self.reloc_method)
                 if loop_cam is not None:
+                    if self.verbose:
+                        Log(
+                            f"featquery: ACCEPT loop — relocalized kf={loop_cam.uid} ({self.reloc_method})",
+                            tag="Loop",
+                        )
                     return loop_cam
-        
-        loop_id = self.detect_loop_by_featquery(query_resized_img, query_camera)
-        if loop_id > 0 and self.is_this_loop_necessary(loop_id):
-            if self.reloc_method == 'mast3r':
-                loop_cam = self.reloc_with_mast3r(query_camera, query_resized_img, loop_id, loop_type='featquery')
-            else:
-                loop_cam = self.reloc_with_icp(query_camera, loop_id, self.reloc_method)
-            if loop_cam is not None:
-                return loop_cam
-        
+                if self.verbose:
+                    Log(
+                        f"featquery: REJECT — relocalization failed for kf={loop_id} ({self.reloc_method})",
+                        tag="Loop",
+                    )
+
         return None
     
     def overlap_mask_for_depth_pair(self, depth_0, pose_0, depth_1, pose_1, K_0, K_1, depth_threshold=0.05):
@@ -739,7 +879,14 @@ class FrontEnd(mp.Process):
             delta_torch = torch.from_numpy(np.array(delta)).to(device=loop_cam.device, dtype=loop_cam.dtype)
         
         inv_delta = torch.linalg.inv(delta_torch)
-        loop_cam.T = loop_cam.T @ inv_delta
+        loop_cam.T = (loop_cam.T @ inv_delta).detach().clone()
+
+        if self.verbose:
+            Log(
+                f"icp ({icp_method}): DONE pose refine for loop_kf={loop_id} "
+                f"(no MASt3R-style confidence/overlap gates; map alignment via ICP only)",
+                tag="Loop",
+            )
 
         return loop_cam
 
@@ -749,23 +896,52 @@ class FrontEnd(mp.Process):
         loop_cam = clone_obj(self.cameras[loop_id])
         loop_frame = self.key_frames[loop_id]
 
+        if self.verbose:
+            Log(
+                f"mast3r reloc ({loop_type}): query_frame={cur_cam.uid} → loop_kf={loop_id} "
+                f"(enable_mast3r_reloc={self.enable_mast3r_reloc})",
+                tag="Loop",
+            )
+
         if self.enable_mast3r_reloc:
             _, loop_pil_img, _, _ = self.dataset[loop_id]
             loop_resized_img = self.dust3r.preprocess(loop_pil_img)
             poses, depths, confidences, Ks = self.dust3r.predict_2view([cur_resized_img, loop_resized_img])
-            if confidences[0].mean() < 3.0:
+            mean_conf = float(confidences[0].mean().detach())
+            if mean_conf < 3.0:
+                if self.verbose:
+                    Log(
+                        f"mast3r ({loop_type}): REJECT at predict_2view confidence — "
+                        f"mean_conf={mean_conf:.4f} (need >= 3.0) loop_kf={loop_id}",
+                        tag="Loop",
+                    )
                 return None
-            
+            if self.verbose:
+                Log(
+                    f"mast3r ({loop_type}): PASS confidence gate mean_conf={mean_conf:.4f} (>= 3.0)",
+                    tag="Loop",
+                )
+
             loop_tracking_mask = self.overlap_mask_for_depth_pair(depths[0], poses[0], depths[1], poses[1], Ks[0], Ks[1], depth_threshold=0.05)
             raw_w, raw_h = self.dataset.width, self.dataset.height
             loop_tracking_mask = F.interpolate(loop_tracking_mask.unsqueeze(0).unsqueeze(0), size=(raw_h, raw_w), mode='nearest')
             loop_tracking_mask = loop_tracking_mask.squeeze(0).squeeze(0)
 
             overlap_ratio = loop_tracking_mask.sum()/(raw_h * raw_w)
-            if self.verbose:
-                Log(f"overlap_ratio: {overlap_ratio}", tag="Loop")
+            ov = float(overlap_ratio.detach())
             if overlap_ratio < self.loop_overlap_ratio:
+                if self.verbose:
+                    Log(
+                        f"mast3r ({loop_type}): REJECT at depth-consistency overlap — "
+                        f"overlap_ratio={ov:.4f} (need >= {self.loop_overlap_ratio}) loop_kf={loop_id}",
+                        tag="Loop",
+                    )
                 return None
+            if self.verbose:
+                Log(
+                    f"mast3r ({loop_type}): PASS depth-consistency overlap_ratio={ov:.4f} (>= {self.loop_overlap_ratio})",
+                    tag="Loop",
+                )
             
             cur_cam_resized = Camera(cur_cam.uid, cur_cam.T, cur_cam.gt_pose, Ks[0], self.resized_h, self.resized_w)
             if self.enable_scale_optimization:
@@ -777,21 +953,48 @@ class FrontEnd(mp.Process):
             relative_pose[:-1,-1] *= init_scale
 
             init_pose = relative_pose @ cur_cam.T
-
-            loop_cam.T = init_pose
+            loop_cam.T = init_pose.detach().clone()
+            if self.verbose:
+                isc = init_scale.detach().item() if isinstance(init_scale, torch.Tensor) else float(init_scale)
+                Log(
+                    f"mast3r ({loop_type}): applied predict_2view init pose "
+                    f"(scale_opt={self.enable_scale_optimization}, init_scale={isc:.4f})",
+                    tag="Loop",
+                )
         else:
             loop_tracking_mask = None  # use default tracking_mask when mast3r is disabled
+            if self.verbose:
+                Log(
+                    f"mast3r ({loop_type}): skipped predict_2view — pose from keyframe clone; "
+                    f"tracking will verify depth (enable_mast3r_reloc=False)",
+                    tag="Loop",
+                )
 
         grad_mask, _ = self.compute_grad_mask(loop_frame.rgb)
 
-        _, depth_avg_error = self.tracking(loop_cam, loop_frame.rgb, loop_frame.depth, 
-                                           grad_mask, loop_tracking_mask, render_option='active')
+        _, depth_avg_error = self.tracking(
+            loop_cam, loop_frame.rgb, loop_frame.depth,
+            grad_mask, loop_tracking_mask, render_option='active',
+            itr_num=self.reloc_tracking_itr_num,
+        )
+
+        derr = float(depth_avg_error.detach())
+        if depth_avg_error > self.depth_error_threshold:
+            if self.verbose:
+                Log(
+                    f"mast3r ({loop_type}): REJECT at loop tracking verification — "
+                    f"depth_avg_error={derr:.5f} (threshold {self.depth_error_threshold}) loop_kf={loop_id}",
+                    tag="Loop",
+                )
+            return None
 
         if self.verbose:
-            Log(f"depth avg error: {depth_avg_error}", tag="Loop")
-        if depth_avg_error > self.depth_error_threshold:
-            return None
-        
+            Log(
+                f"mast3r ({loop_type}): PASS loop tracking — depth_avg_error={derr:.5f} "
+                f"(<= {self.depth_error_threshold}) loop_kf={loop_id}",
+                tag="Loop",
+            )
+
         return loop_cam
     
 
@@ -908,10 +1111,14 @@ class FrontEnd(mp.Process):
         except Exception as e:
             Log("Spark live export failed: ", str(e), tag="Spark")
 
-    def add_keyframe(self, uid, frame, resized_img):
+    def add_keyframe(self, uid, frame, resized_img, src=""):
         self.key_frames[uid] = frame
         self.key_frame_ids.append(uid)
-        self.dust3r.add_img_to_retriever(resized_img, uid)
+        if self.enable_loop_closure and resized_img is not None:
+            self.dust3r.add_img_to_retriever(resized_img, uid)
+        if self.verbose:
+            tag = f" ({src})" if src else ""
+            Log(f"kf+ front uid={uid} n_kf={len(self.key_frame_ids)}{tag}", tag="Track")
 
     def run(self):
         if self._spark_live_enabled:
@@ -1019,22 +1226,44 @@ class FrontEnd(mp.Process):
                         continue
                     
                     original_img, pil_img, depth, gt_pose = self.dataset[cur_frame_idx]
-                    
+
                     last_idx = cur_frame_idx - step
-                    init_pose = self.cameras[last_idx].T
+                    if self.use_odom_init_guess:
+                        prev_gt_pose = self.cameras[last_idx].gt_pose
+                        if prev_gt_pose is not None and gt_pose is not None:
+                            odom_rel = gt_pose @ torch.linalg.inv(prev_gt_pose)
+                            init_pose = odom_rel @ self.cameras[last_idx].T
+                        else:
+                            init_pose = self.cameras[last_idx].T
+                    else:
+                        init_pose = self.cameras[last_idx].T
     
                     cur_cam = Camera(cur_frame_idx, init_pose, gt_pose, self.dataset.K, self.dataset.height, self.dataset.width)
-                    grad_mask, mapping_mask = self.compute_grad_mask(original_img)
+                    grad_mask, rgb_pixel_mask = self.compute_grad_mask(original_img)
                     depth_mask = torch.logical_and(depth > self.min_depth, depth < self.max_depth)
-                    mapping_mask = torch.logical_and(depth_mask, mapping_mask)
-                    cur_frame = Frame(camera_id=cur_frame_idx, rgb=original_img, depth=depth, mapping_mask=mapping_mask)
+                    depth_mapping_mask = torch.logical_and(depth_mask, rgb_pixel_mask)
+                    cur_frame = Frame(
+                        camera_id=cur_frame_idx,
+                        rgb=original_img,
+                        depth=depth,
+                        mapping_mask=rgb_pixel_mask,
+                        depth_mapping_mask=depth_mapping_mask,
+                    )
     
                     render_pkg, _ = self.tracking(cur_cam, original_img, depth, grad_mask=grad_mask)
     
                     self.cameras[cur_frame_idx] = cur_cam
     
-                    resized_img = self.dust3r.preprocess(pil_img)
-                    loop_cam = self.try_loop_closure(resized_img, depth, cur_cam)
+                    if self.enable_loop_closure:
+                        resized_img = self.dust3r.preprocess(pil_img)
+                        k_track = (cur_frame_idx - self.frame_begin) // self.frame_step
+                        if k_track > 0 and (k_track % self.loop_closure_check_every) != 0:
+                            loop_cam = None
+                        else:
+                            loop_cam = self.try_loop_closure(resized_img, depth, cur_cam)
+                    else:
+                        resized_img = None
+                        loop_cam = None
     
                     if loop_cam is not None :
                         self.last_loop_at_len_kf = len(self.key_frame_ids)
@@ -1043,7 +1272,7 @@ class FrontEnd(mp.Process):
                             Log("Loop detected at frame: ", loop_cam.uid)
                         # see current frame as a key frame
     
-                        self.add_keyframe(cur_frame_idx, cur_frame, resized_img)
+                        self.add_keyframe(cur_frame_idx, cur_frame, resized_img, src="loop")
     
                         loop_idx = self.key_frame_ids.index(loop_cam.uid)
                         left_idx = max(loop_idx - 5, 0)
@@ -1074,7 +1303,7 @@ class FrontEnd(mp.Process):
     
                     if (t_check and overlap_check) or t_check_max or overlap_max :
     
-                        self.add_keyframe(cur_frame_idx, cur_frame, resized_img)
+                        self.add_keyframe(cur_frame_idx, cur_frame, resized_img, src="odom")
     
                         if (len(self.key_frame_ids) - self.last_loop_at_len_kf) >= self.old_than_N_keyframe:
                             self.loop_frame_ids = []
@@ -1085,7 +1314,11 @@ class FrontEnd(mp.Process):
     
                         if len(self.key_frame_ids) % self.save_trj_kf_intv == 0:
                             self.eval_pose(cur_frame_idx, quiet=not self.verbose)
-    
+
+                    else:
+                        if self.pgo_with_all_frames:
+                            self.tracked_since_last_kf.append(cur_cam)
+
                     cur_frame_idx += step
                     pbar.update(1)
                     pbar.set_postfix(kf=len(self.key_frame_ids), frame=cur_frame_idx)

@@ -6,6 +6,8 @@ _log_styles = {
     "Eval": "bold red",
     "Loop": "dim",
     "Viser": "cyan",
+    "Track": "yellow",
+    "Map": "blue",
 }
 
 def get_style(tag):

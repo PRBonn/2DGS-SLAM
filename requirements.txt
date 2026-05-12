@@ -29,6 +29,9 @@ PyOpenGL
 PyGLM
 imgviz
 
+# Optional: Intel RealSense live camera support
+# pyrealsense2
+
 # Local CUDA / C extensions (paths relative to repo root)
 ./submodules/diff-surfel-rasterization
 ./submodules/simple-knn

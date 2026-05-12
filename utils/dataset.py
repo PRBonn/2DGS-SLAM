@@ -350,6 +350,18 @@ class BS3DDataset(MonocularDataset):
         self.poses = parser.poses
 
 
+class StrayScannerDataset(MonocularDataset):
+    """StrayScanner (iPhone RGB-D) dataset. Expects preprocessed output from scripts/stray_preprocess.py."""
+    def __init__(self, args, path, config):
+        super().__init__(args, path, config)
+        dataset_path = config["Dataset"]["dataset_path"]
+        parser = ScanNetParser(dataset_path)
+        self.num_imgs = parser.n_img
+        self.color_paths = parser.color_paths
+        self.depth_paths = parser.depth_paths
+        self.poses = parser.poses
+
+
 class ReplicaDataset(MonocularDataset):
     def __init__(self, args, path, config):
         super().__init__(args, path, config)
@@ -361,6 +373,114 @@ class ReplicaDataset(MonocularDataset):
         self.poses = parser.poses
 
 
+class RealsenseDataset(BaseDataset):
+    def __init__(self, args, path, config):
+        super().__init__(args, path, config)
+        import pyrealsense2 as rs
+
+        self.rs = rs
+        self.pipeline = rs.pipeline()
+        self.h, self.w = 720, 1280
+
+        if self.config["Dataset"]["sensor_type"] == "depth":
+            self.has_depth = True
+        else:
+            self.has_depth = False
+
+        rs_config = rs.config()
+        rs_config.enable_stream(rs.stream.color, self.w, self.h, rs.format.bgr8, 30)
+        if self.has_depth:
+            rs_config.enable_stream(rs.stream.depth)
+
+        self.profile = self.pipeline.start(rs_config)
+
+        if self.has_depth:
+            self.align = rs.align(rs.stream.color)
+
+        rgb_sensor = self.profile.get_device().query_sensors()[1]
+        rgb_sensor.set_option(rs.option.enable_auto_exposure, False)
+        rgb_sensor.set_option(rs.option.enable_auto_white_balance, False)
+        rgb_sensor.set_option(rs.option.exposure, 200)
+
+        rgb_profile = rs.video_stream_profile(
+            self.profile.get_stream(rs.stream.color)
+        )
+        rgb_intrinsics = rgb_profile.get_intrinsics()
+
+        self.fx = rgb_intrinsics.fx
+        self.fy = rgb_intrinsics.fy
+        self.cx = rgb_intrinsics.ppx
+        self.cy = rgb_intrinsics.ppy
+        self.width = rgb_intrinsics.width
+        self.height = rgb_intrinsics.height
+        self.fovx = focal2fov(self.fx, self.width)
+        self.fovy = focal2fov(self.fy, self.height)
+        self.K = np.array(
+            [[self.fx, 0.0, self.cx], [0.0, self.fy, self.cy], [0.0, 0.0, 1.0]]
+        )
+
+        self.disorted = True
+        self.dist_coeffs = np.asarray(rgb_intrinsics.coeffs)
+        self.map1x, self.map1y = cv2.initUndistortRectifyMap(
+            self.K, self.dist_coeffs, np.eye(3), self.K,
+            (self.w, self.h), cv2.CV_32FC1,
+        )
+
+        if self.has_depth:
+            depth_sensor = self.profile.get_device().first_depth_sensor()
+            self.depth_scale = depth_sensor.get_depth_scale()
+
+        nerf_normalization_radius = 5
+        self.scene_info = {
+            "nerf_normalization": {
+                "radius": nerf_normalization_radius,
+                "translation": np.zeros(3),
+            },
+        }
+
+        self._frame_cache = {}
+
+    def __getitem__(self, idx):
+        if idx in self._frame_cache:
+            return self._frame_cache[idx]
+
+        frameset = self.pipeline.wait_for_frames()
+
+        if self.has_depth:
+            aligned_frames = self.align.process(frameset)
+            rgb_frame = aligned_frames.get_color_frame()
+            aligned_depth_frame = aligned_frames.get_depth_frame()
+            depth = np.array(aligned_depth_frame.get_data()).astype(np.float64) * self.depth_scale
+            depth[depth < 0] = 0
+            np.nan_to_num(depth, nan=1000)
+        else:
+            rgb_frame = frameset.get_color_frame()
+            depth = None
+
+        image = np.asanyarray(rgb_frame.get_data())
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if self.disorted:
+            image = cv2.remap(image, self.map1x, self.map1y, cv2.INTER_LINEAR)
+
+        pil_image = Image.fromarray(image)
+
+        image = (
+            torch.from_numpy(image / 255.0)
+            .clamp(0.0, 1.0)
+            .permute(2, 0, 1)
+            .to(device=self.device, dtype=self.dtype)
+        )
+
+        pose = torch.eye(4, device=self.device, dtype=self.dtype)
+
+        if depth is not None:
+            depth = torch.from_numpy(depth).to(device=self.device, dtype=self.dtype)
+
+        result = (image, pil_image, depth, pose)
+        self._frame_cache[idx] = result
+        return result
+
+
 def load_dataset(args, path, config):
     if config["Dataset"]["type"] == "tum":
         return TUMDataset(args, path, config)
@@ -370,5 +490,9 @@ def load_dataset(args, path, config):
         return ScanNetDataset(args, path, config)
     elif config["Dataset"]["type"] == "bs3d":
         return BS3DDataset(args, path, config)
+    elif config["Dataset"]["type"] == "stray":
+        return StrayScannerDataset(args, path, config)
+    elif config["Dataset"]["type"] == "realsense":
+        return RealsenseDataset(args, path, config)
     else:
         raise ValueError("Unknown dataset type")

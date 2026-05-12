@@ -45,6 +45,7 @@ Training:
   init_itr_num: 300
   # Tracking
   tracking_itr_num: 120
+  reloc_tracking_itr_num: 120
   edge_threshold: 1.1
   rgb_boundary_threshold: 0.01
   depth_min_threshold: 0.1
@@ -52,8 +53,8 @@ Training:
   kf_max_translation: 0.4
   kf_overlap: 0.925
   kf_min_overlap: 0.8
-  traking_lambda_depth: 10.0
-  traking_lambad_grad: 1.0
+  tracking_lambda_depth: 10.0
+  tracking_lambda_grad: 1.0
   depth_error_threshold: 0.005
   lr:
     cam_rot_delta: 0.0025
@@ -73,6 +74,8 @@ Training:
   # relocation method: one of ['mast3r', 'icp', 'robust_icp']
   reloc_method: 'mast3r'
   enable_revisit_loop: True  # enable/disable revisit-based loop closure
+  loop_closure_check_every: 1  # run detection every N-th tracked frame (1 = every frame)
+  enable_loop_closure: True  # False = odometry-only (no loop/PGO; no retriever ViT/ASMK)
   enable_scale_optimization: True  # enable/disable scale optimization in loop closure
   enable_mast3r_reloc: True  # enable/disable mast3r-based relocalization
   loop_candidate_score: 0.025
@@ -83,6 +86,7 @@ Training:
   pgo_tran_std: 0.01 # m 
   pgo_rot_std: 0.03 # deg
   pgo_error_thre_frame: 200.0
+  pgo_with_all_frames: True
 
 ## 3DGS default parameters
 opt_params:
