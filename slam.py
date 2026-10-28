@@ -248,19 +248,22 @@ class SLAM:
             time.sleep(3)
 
         backend_process.start()
-        self.frontend.run()
-
-        self.backend_queue.put(["pause"])
-        self.backend_queue.put(["stop"])
-        backend_process.join(timeout=120)
-        if backend_process.is_alive():
-            Log("Backend did not exit after stop; terminating.", tag="SLAM")
-            backend_process.terminate()
-            backend_process.join(timeout=30)
-        if backend_process.is_alive():
-            backend_process.kill()
-            backend_process.join(timeout=15)
-        backend_process.close()
+        try:
+            self.frontend.run()
+        finally:
+            # Always stop the backend, even if the frontend raised: it is a non-daemon
+            # process looping forever, so skipping this would hang the interpreter on exit.
+            self.backend_queue.put(["pause"])
+            self.backend_queue.put(["stop"])
+            backend_process.join(timeout=120)
+            if backend_process.is_alive():
+                Log("Backend did not exit after stop; terminating.", tag="SLAM")
+                backend_process.terminate()
+                backend_process.join(timeout=30)
+            if backend_process.is_alive():
+                backend_process.kill()
+                backend_process.join(timeout=15)
+            backend_process.close()
 
         Log("Backend stopped and joined the main thread")
         if self.use_gui:
