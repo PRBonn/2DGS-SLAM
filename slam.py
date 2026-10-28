@@ -35,6 +35,12 @@ import warnings
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# Pose optimization needs full fp32: TF32 (Ampere+) drifts tracking by 10+ cm on Replica.
+# Set after all imports so no dependency can re-enable it; this module-level code also
+# runs in the spawned backend process.
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+
 
 def _close_mp_queue(q):
     if q is None or isinstance(q, FakeQueue):
