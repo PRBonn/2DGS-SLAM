@@ -37,6 +37,14 @@ def clean_mesh(mesh, verbose=False):
 
     min_len = 200
     components_to_keep = [c for c in components if len(c) >= min_len]
+    if not components_to_keep:
+        # An empty Trimesh makes nondegenerate_faces() raise IndexError; keep the raw mesh instead.
+        Log(
+            f"Mesh cleaning skipped: no connected component with >= {min_len} vertices "
+            f"(vertices={len(mesh_tri.vertices)}, faces={len(mesh_tri.faces)}, components={len(components)})",
+            tag="Mesh",
+        )
+        return mesh
 
     new_vertices = []
     new_faces = []
@@ -128,6 +136,11 @@ def tsdf_fusion(cameras, gaussians, depth_type, kf_indices, file_path, verbose_m
         volume.integrate(rgbd, intrinsic, w2c)
 
     o3d_mesh = volume.extract_triangle_mesh()
+    Log(
+        f"TSDF mesh from {len(kf_indices)} keyframes: vertices={len(o3d_mesh.vertices)}, "
+        f"triangles={len(o3d_mesh.triangles)}",
+        tag="Mesh",
+    )
     o3d_mesh = clean_mesh(o3d_mesh, verbose=verbose_mesh_clean)
     o3d_mesh = o3d_mesh.translate(compensate_vector)
     o3d.io.write_triangle_mesh(file_path, o3d_mesh)
