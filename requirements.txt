@@ -4,7 +4,7 @@
 
 numpy<2
 opencv-python<4.11
-open3d
+open3d<0.20  # 0.20.0 ScalableTSDFVolume.integrate() writes no voxels -> empty mesh
 trimesh
 plyfile
 PyYAML
