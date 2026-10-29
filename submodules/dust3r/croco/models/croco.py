@@ -10,7 +10,8 @@
 
 import torch
 import torch.nn as nn
-torch.backends.cuda.matmul.allow_tf32 = True # for gpu >= Ampere and pytorch >= 1.12
+# Do not enable TF32 globally on import: it silently switches every fp32 matmul in the
+# importing process (incl. SLAM pose math) to TF32 and causes large drift on Ampere+ GPUs.
 from functools import partial
 
 from models.blocks import Block, DecoderBlock, PatchEmbed
