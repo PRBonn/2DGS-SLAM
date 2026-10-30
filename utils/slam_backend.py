@@ -713,8 +713,10 @@ class BackEnd(mp.Process):
                 
         while not self.backend_queue.empty():
             self.backend_queue.get()
-        while not self.frontend_queue.empty():
-            self.frontend_queue.get()
+        # Do not drain frontend_queue here: its messages hold CUDA tensors this process shared
+        # via CUDA IPC, and unpickling them in the producer opens our own IPC handles, which
+        # segfaults. Just exit without waiting to flush messages the frontend will never read.
+        self.frontend_queue.cancel_join_thread()
         ipc = getattr(torch.cuda, "ipc_collect", None)
         if ipc is not None and torch.cuda.is_available():
             ipc()
